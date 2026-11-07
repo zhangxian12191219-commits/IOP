@@ -1,7 +1,0 @@
-[Unit]
-Description=SNMP NMS health check (auto restart if unhealthy)
-After=snmp-nms.service
-
-[Service]
-Type=oneshot
-ExecStart=/usr/local/bin/snmp-nms-healthcheck
