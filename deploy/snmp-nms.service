@@ -1,0 +1,47 @@
+[Unit]
+Description=SNMP Network Monitor (网络设备/安全设备监控 + 大屏)
+After=network-online.target
+Wants=network-online.target
+# 0 = 不做启动频率限制，异常退出后会一直尝试重启
+StartLimitIntervalSec=0
+
+[Service]
+# systemd watchdog：应用每 30 秒发送 WATCHDOG=1，60 秒无心跳则 systemd 自动重启
+Type=notify
+NotifyAccess=main
+WatchdogSec=60
+TimeoutStartSec=60
+# 主机网络/服务/防火墙/计划任务管理需要 root；只读部署可改为 snmp
+User=root
+Group=root
+WorkingDirectory=/opt/snmp-monitor
+EnvironmentFile=-/opt/snmp-monitor/deploy/snmp-nms.env
+Environment=PYTHONUNBUFFERED=1
+Environment=PATH=/opt/snmp-monitor/.venv/bin:/usr/local/bin:/usr/bin:/usr/sbin:/bin:/sbin
+ExecStart=/opt/snmp-monitor/.venv/bin/python run_backend.py 8000
+
+# ---- 防意外退出：任何退出码都自动重启，3 秒后重试 ----
+Restart=always
+RestartSec=3
+# 优雅停机：先 SIGTERM，超时后 SIGKILL
+KillSignal=SIGTERM
+KillMode=mixed
+TimeoutStopSec=30
+# 允许 ICMP Ping 探测（网站监控的 Ping 模式）；root 服务保留完整安装能力
+AmbientCapabilities=CAP_NET_RAW
+
+# ---- 安全加固（按需调整）----
+NoNewPrivileges=true
+PrivateTmp=true
+# 主机管理/自动安装系统工具需要写 /usr；root 服务下不再启用 ProtectSystem
+ProtectSystem=no
+ProtectHome=read-only
+ReadWritePaths=/opt/snmp-monitor /usr
+
+# ---- 日志进 journald（journalctl -u snmp-nms -f）----
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=snmp-nms
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,21 @@
+# 运行时数据与本地密钥/凭据
+data/
+.env
+*.db
+*.db-shm
+*.db-wal
+*.sqlite
+*.sqlite3
+*.pem
+*.key
+*.secret
+.auth_secret
+initial_admin_password.txt
+frontend/dist/
+node_modules/
+__pycache__/
+*.pyc
+.pytest_cache/
+.venv/
+tmp-build*/
+screenshots/
