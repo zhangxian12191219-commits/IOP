@@ -1,0 +1,145 @@
+# =============================================================================
+# 网管系统一体化部署：应用 + PostgreSQL + Redis（应用内 Web 网关直接提供 HTTPS）
+# -----------------------------------------------------------------------------
+# 推荐做法：复制 .env.example 为 .env，在 .env 中修改以下参数，再执行：
+#   cp .env.example .env
+#   docker compose up -d
+#
+# 【必改】POSTGRES_PASSWORD
+#    PostgreSQL 的 nms 用户密码
+# 【必改】DATABASE_URL
+#    应用连接 PostgreSQL 的连接串；其中的密码必须与 POSTGRES_PASSWORD 一致
+# 【必改】AUTH_SECRET
+#    登录令牌签名密钥，生产环境必须改成随机长字符串
+# 【必改】AUTH_DEFAULT_PASSWORD
+#    首次初始化的 admin 密码，部署后也应尽快在系统内修改
+#
+# 【按需修改】HTTP_PORT / HTTPS_PORT
+#    宿主机 HTTP 80 / HTTPS 443 访问端口；默认 80/443
+# 【按需修改】NMS_IMAGE
+#    已发布应用镜像时填写镜像地址；不填则本机自动构建
+# 【按需修改】TZ / COLLECTION_INTERVAL / LOG_LEVEL
+#    时区、采集间隔、日志级别
+#
+# 如果修改 POSTGRES_USER / POSTGRES_DB：
+#   必须同时修改 DATABASE_URL 中的用户名和数据库名。
+#
+# 官方镜像会自动拉取；应用镜像不存在时自动构建。
+# 如已发布应用镜像，可设置 NMS_IMAGE 后执行：
+#   docker compose pull snmp-nms && docker compose up -d --no-build
+# =============================================================================
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      # 【按需】时区
+      TZ: ${TZ:-Asia/Shanghai}
+      # 【按需】数据库名/用户名；修改后必须同步 DATABASE_URL
+      POSTGRES_DB: ${POSTGRES_DB:-snmp_nms}
+      POSTGRES_USER: ${POSTGRES_USER:-nms}
+      # 【必改】数据库密码；必须使用强随机密码，不能留空或使用示例值
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set in .env}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+      start_period: 20s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  redis:
+    image: redis:7.4-alpine
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  snmp-nms:
+    # 【按需】已发布镜像时改成 registry/namespace/snmp-nms:tag
+    image: ${NMS_IMAGE:-snmp-nms:1.8.9}
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    init: true
+    stop_grace_period: 30s
+    # 默认由应用内 Web 网关直接提供 HTTPS 443，HTTP 80 自动跳转
+    ports:
+      - "${HTTP_PORT:-80}:80"
+      - "${HTTPS_PORT:-443}:443"
+    expose:
+      - "8000"
+    environment:
+      # 【按需】时区
+      TZ: ${TZ:-Asia/Shanghai}
+      API_HOST: 0.0.0.0
+      API_PORT: "8000"
+      RUN_BACKGROUND_TASKS: "1"
+      # 【必改】数据库连接串；密码必须和 POSTGRES_PASSWORD 一致
+      DATABASE_URL: ${DATABASE_URL:?DATABASE_URL must be set in .env}
+      REDIS_ENABLED: "true"
+      # 【按需】Redis 地址；默认使用 compose 内 redis
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
+      UPLOAD_DIR: /data/uploads
+      LOG_DIR: /data/logs
+      LICENSE_FILE: /data/license.key
+      # 【按需】
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      # 【必改】登录令牌签名密钥，请替换为随机长字符串
+      AUTH_SECRET: ${AUTH_SECRET:-}
+      # 【按需】登录有效期（小时）
+      AUTH_TOKEN_HOURS: ${AUTH_TOKEN_HOURS:-12}
+      # 【按需】初始管理员账号
+      AUTH_DEFAULT_ADMIN: ${AUTH_DEFAULT_ADMIN:-admin}
+      # 【必改】初始管理员密码
+      # 留空时首次启动随机生成，保存到 data/initial_admin_password.txt
+      AUTH_DEFAULT_PASSWORD: ${AUTH_DEFAULT_PASSWORD:-}
+      # 【按需】采集参数
+      COLLECTION_INTERVAL: ${COLLECTION_INTERVAL:-60}
+      SNMP_TIMEOUT: ${SNMP_TIMEOUT:-3}
+      SNMP_RETRIES: ${SNMP_RETRIES:-1}
+    volumes:
+      - app-data:/data
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    # ICMP Ping 探测需要 NET_RAW
+    cap_add:
+      - NET_RAW
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8000/api/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+
+volumes:
+  postgres-data:
+  redis-data:
+  app-data:

@@ -1,0 +1,21 @@
+# 构建上下文忽略项
+.git
+.gitignore
+.venv
+venv
+__pycache__
+*.pyc
+*.pyo
+*.db
+*.sqlite3
+node_modules
+frontend/node_modules
+frontend/dist
+screenshots
+data
+.pack
+vendor
+*.zip
+.vscode
+.idea
+.DS_Store

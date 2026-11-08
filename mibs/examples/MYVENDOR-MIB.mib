@@ -1,0 +1,65 @@
+MYVENDOR-MIB DEFINITIONS ::= BEGIN
+
+IMPORTS
+    MODULE-IDENTITY, OBJECT-TYPE, Integer32, enterprises
+        FROM SNMPv2-SMI
+    DisplayString
+        FROM SNMPv2-TC;
+
+myVendorMib MODULE-IDENTITY
+    LAST-UPDATED "202401010000Z"
+    ORGANIZATION "MyVendor"
+    CONTACT-INFO "support@myvendor.example"
+    DESCRIPTION "Vendor private MIB for router health monitoring."
+    ::= { enterprises 99999 }
+
+sysHealth     OBJECT IDENTIFIER ::= { myVendorMib 1 }
+cpuStats      OBJECT IDENTIFIER ::= { sysHealth 1 }
+memStats      OBJECT IDENTIFIER ::= { sysHealth 2 }
+envStats      OBJECT IDENTIFIER ::= { sysHealth 3 }
+powerStats    OBJECT IDENTIFIER ::= { sysHealth 4 }
+
+cpuUsage5s OBJECT-TYPE
+    SYNTAX      Integer32 (0..100)
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION "CPU utilization in the last 5 seconds, in percent."
+    ::= { cpuStats 1 }
+
+cpuUsage1m OBJECT-TYPE
+    SYNTAX      Integer32 (0..100)
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION "CPU utilization in the last minute, in percent."
+    ::= { cpuStats 2 }
+
+memUsagePercent OBJECT-TYPE
+    SYNTAX      Integer32 (0..100)
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION "Memory usage in percent."
+    ::= { memStats 1 }
+
+memTotalBytes OBJECT-TYPE
+    SYNTAX      Integer32
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION "Total memory in bytes."
+    ::= { memStats 2 }
+
+boardTemperature OBJECT-TYPE
+    SYNTAX      Integer32
+    UNITS       "celsius"
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION "Board temperature in celsius degrees."
+    ::= { envStats 1 }
+
+powerStatus OBJECT-TYPE
+    SYNTAX      Integer32
+    MAX-ACCESS  read-only
+    STATUS      current
+    DESCRIPTION "Power supply status: 1 normal, 2 abnormal."
+    ::= { powerStats 1 }
+
+END

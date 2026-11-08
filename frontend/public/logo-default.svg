@@ -1,0 +1,54 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" fill="none">
+  <defs>
+    <linearGradient id="bg" x1="8" y1="5" x2="56" y2="60" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#0B2038"/>
+      <stop offset="0.55" stop-color="#061626"/>
+      <stop offset="1" stop-color="#030D18"/>
+    </linearGradient>
+    <linearGradient id="edge" x1="8" y1="8" x2="57" y2="58" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#67E8F9"/>
+      <stop offset="0.5" stop-color="#38BDF8"/>
+      <stop offset="1" stop-color="#6366F1"/>
+    </linearGradient>
+    <linearGradient id="chip" x1="22" y1="22" x2="43" y2="43" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#A5F3FC"/>
+      <stop offset="1" stop-color="#22D3EE"/>
+    </linearGradient>
+    <radialGradient id="halo" cx="0" cy="0" r="1" gradientTransform="translate(32 32) rotate(90) scale(27)" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#22D3EE" stop-opacity="0.28"/>
+      <stop offset="1" stop-color="#22D3EE" stop-opacity="0"/>
+    </radialGradient>
+    <filter id="glow" x="-30%" y="-30%" width="160%" height="160%">
+      <feGaussianBlur stdDeviation="1.6" result="blur"/>
+      <feMerge>
+        <feMergeNode in="blur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+  </defs>
+
+  <rect x="2" y="2" width="60" height="60" rx="15" fill="url(#bg)" stroke="url(#edge)" stroke-width="1.5"/>
+  <circle cx="32" cy="32" r="27" fill="url(#halo)"/>
+
+  <!-- Hexagonal platform frame -->
+  <path d="M32 8.5 51.5 20v24L32 55.5 12.5 44V20L32 8.5Z"
+        stroke="url(#edge)" stroke-opacity="0.52" stroke-width="1.1"/>
+
+  <!-- Circuit traces -->
+  <path d="M22 26H15.5V17H11M42 38h6.5v9H53M26 22V15.5h-4M38 42v6.5h4"
+        stroke="#38BDF8" stroke-opacity="0.75" stroke-width="1.2" stroke-linecap="round"/>
+  <circle cx="11" cy="17" r="1.7" fill="#67E8F9"/>
+  <circle cx="53" cy="47" r="1.7" fill="#67E8F9"/>
+  <circle cx="22" cy="15.5" r="1.5" fill="#38BDF8"/>
+  <circle cx="42" cy="48.5" r="1.5" fill="#38BDF8"/>
+
+  <!-- AI chip -->
+  <rect x="21.5" y="21.5" width="21" height="21" rx="5.5" fill="#041422" stroke="url(#chip)" stroke-width="1.4"/>
+  <path d="M22.5 34.5h4.8l2.4-8 4.3 15 2.8-9h4.7"
+        stroke="#A5F3FC" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round" filter="url(#glow)"/>
+
+  <!-- Intelligence spark -->
+  <path d="M46 13.5 47.6 18 52 19.6 47.6 21.2 46 25.6 44.4 21.2 40 19.6 44.4 18 46 13.5Z"
+        fill="#A5F3FC" stroke="#E0F2FE" stroke-width="0.5" filter="url(#glow)"/>
+  <circle cx="18" cy="46" r="1.4" fill="#34D399"/>
+</svg>
