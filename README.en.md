@@ -356,6 +356,12 @@ cd frontend && npm run build
 - Do not commit `.env`, `data/`, databases, `data/license.key`, `data/.auth_secret`, initial password files, or the license private key.
 - See [SECURITY.md](SECURITY.md) for the security baseline, OWASP review, and release blocking rules.
 
-## 13. Version
+## 13. License
+
+This project is licensed under the **Mozilla Public License 2.0 (MPL-2.0)**.
+
+See [LICENSE](LICENSE) for the full text. The release package includes `LICENSE` automatically; the build fails if the license file is missing.
+
+## 14. Version
 
 This README corresponds to SNMP Monitor **v2.22.22**. Verify the server, network devices, database, and license before deployment.

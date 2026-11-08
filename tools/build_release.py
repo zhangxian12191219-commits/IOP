@@ -135,6 +135,9 @@ def build(output_root: Path, force: bool) -> tuple[Path, Path, str]:
     readme_en = PROJECT_ROOT / "README.en.md"
     if not readme_en.is_file():
         raise SystemExit("缺少英文 README：README.en.md")
+    license_file = PROJECT_ROOT / "LICENSE"
+    if not license_file.is_file() or license_file.stat().st_size < 100:
+        raise SystemExit("缺少开源许可证文件：LICENSE")
     offline_python = PROJECT_ROOT / "offline" / "python-linux-x86_64.tar.xz"
     offline_wheels = PROJECT_ROOT / "offline" / "wheels"
     offline_busybox = PROJECT_ROOT / "offline" / "bin" / "busybox"
@@ -148,6 +151,8 @@ def build(output_root: Path, force: bool) -> tuple[Path, Path, str]:
     if source_findings:
         raise SystemExit("源码敏感信息检查未通过：\n" + "\n".join(source_findings[:30]))
     _copy_tree(PROJECT_ROOT, release_dir)
+    if not (release_dir / "LICENSE").is_file():
+        raise SystemExit("发布目录缺少 LICENSE，已阻止生成发布包")
     for script in release_dir.rglob("*.sh"):
         if b"\r" in script.read_bytes():
             raise SystemExit(f"发布包 Shell 脚本仍包含 CR 换行: {script.relative_to(release_dir)}")
@@ -176,6 +181,7 @@ def build(output_root: Path, force: bool) -> tuple[Path, Path, str]:
     digest = _sha256(zip_path)
     print(f"version: {version}")
     print("readme: README.md (zh-CN), README.en.md (en-US)")
+    print("license: LICENSE (MPL-2.0)")
     print(f"offline: {offline_python.name}, busybox, {len(list(offline_wheels.glob('*.whl')))} wheels")
     file_count = sum(1 for p in release_dir.rglob('*') if p.is_file())
     print(f"release_dir: {final_release_dir}")
