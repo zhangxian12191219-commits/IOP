@@ -4,7 +4,7 @@
 
 面向网络设备、安全设备、服务器、网站和虚拟化/容器环境的统一监控运维平台，覆盖资产管理、SNMP 采集、网络拓扑、3D 大屏、告警、巡检、配置备份、机房、MIB、AI 运维、级联和系统管理。
 
-- 当前版本：**v2.22.23**
+- 当前版本：**v2.22.24**
 - 授权签发平台：**License Studio v2.10.1**
 - 后端：Python 3.12 / FastAPI / SQLAlchemy
 - 前端：Vue 3 / Vite / Element Plus / ECharts / AntV X6
@@ -123,7 +123,7 @@ IOP 用于统一纳管企业内网中的网络、安全和计算资源，把原�
 
 ### 2.9 诊断与问题反馈
 
-- 系统配置 → 网络配置右侧提供 Debug 日志收集；
+- 系统配置 → “网络配置”右侧增加独立“Debug 日志”页签；
 - 一键收集版本、系统信息、最近日志、脱敏配置、数据库计数和网络诊断；
 - 可填写问题现象、发生时间和复现步骤；
 - 自动过滤密码、Token、API Key、私钥和授权文件内容；
@@ -143,9 +143,9 @@ IOP 用于统一纳管企业内网中的网络、安全和计算资源，把原�
 
 ## 3. 当前版本改进
 
-### v2.22.23
+### v2.22.24
 
-- 系统配置 → 网络配置右侧增加 Debug 日志收集；
+- Debug 日志收集从网络配置内部移出，改为“网络配置”右侧的独立页签；
 - 一键生成脱敏诊断 ZIP，包含版本、系统信息、最近日志、配置快照、数据库计数、网络诊断和问题描述；
 - 自动过滤密码、Token、API Key、私钥、授权文件等敏感内容；
 - 诊断包保留最近 20 份，下载后可直接反馈给技术支持分析。
@@ -244,7 +244,7 @@ flowchart LR
 ### 5.1 Docker Compose
 
 ```bash
-cd IOP-v2.22.23
+cd IOP-v2.22.24
 cp .env.example .env
 ```
 
@@ -279,7 +279,7 @@ https://<服务器IP>/
 ### 5.2 Linux systemd
 
 ```bash
-cd IOP-v2.22.23
+cd IOP-v2.22.24
 sudo bash deploy/install-systemd.sh
 sudo systemctl status snmp-nms
 ```
@@ -293,7 +293,7 @@ data/initial_admin_password.txt
 ### 5.3 源码运行
 
 ```bash
-cd IOP-v2.22.23
+cd IOP-v2.22.24
 ./start.sh --build
 ```
 
@@ -462,7 +462,7 @@ GET /api/health
 
 ### 10.5 Debug 诊断包
 
-系统配置 → 网络配置 → 右侧“Debug 日志收集”可生成诊断包：
+系统配置 → “网络配置”右侧的“Debug 日志”独立页签可生成诊断包：
 
 - 版本和运行环境；
 - 系统信息、磁盘、负载；
@@ -541,7 +541,7 @@ cd frontend && npm run build
 ## 12. 目录结构
 
 ```text
-IOP-v2.22.23/
+IOP-v2.22.24/
 ├── backend/                  FastAPI 后端
 ├── frontend/                 Vue 3 前端和构建产物
 ├── deploy/                   systemd、离线安装、Web 网关脚本
@@ -621,7 +621,7 @@ MPL-2.0 允许使用、修改和分发本项目，修改后的 MPL 覆盖文件�
 
 ## 15. 版本
 
-当前版本：**v2.22.23**
+当前版本：**v2.22.24**
 
 ```text
 后端：Python 3.12 / FastAPI

@@ -14,7 +14,7 @@
             <el-button size="small" @click="activeTab === 'update' ? loadUpdateInfo() : activeTab === 'time' ? loadTimeStatus() : activeTab === 'startup' ? loadStartup() : loadAll()" :loading="activeTab === 'time' ? timeLoading : loading" v-if="activeTab !== 'users'">
               <el-icon><Refresh /></el-icon>{{ t('common.refresh') }}
             </el-button>
-            <el-button v-if="canEdit && activeTab !== 'users' && activeTab !== 'status' && activeTab !== 'startup' && activeTab !== 'time' && activeTab !== 'cluster' && activeTab !== 'network' && activeTab !== 'update'" type="primary" size="small" :loading="saving" @click="saveAll">
+            <el-button v-if="canEdit && activeTab !== 'users' && activeTab !== 'status' && activeTab !== 'startup' && activeTab !== 'time' && activeTab !== 'cluster' && activeTab !== 'network' && activeTab !== 'debug' && activeTab !== 'update'" type="primary" size="small" :loading="saving" @click="saveAll">
               <el-icon><Check /></el-icon>{{ t('settings.saveConfig') }}
             </el-button>
           </div>
@@ -1988,8 +1988,6 @@
               title="无法读取主机网络信息，请检查后端运行账户权限。"
             />
             <template v-if="networkData">
-              <div class="network-layout">
-                <div class="network-main">
               <el-alert
                 v-if="!networkData.admin"
                 type="error"
@@ -2214,44 +2212,45 @@
                 </el-table>
                 <div class="form-help network-note">计划任务当前支持现有任务的启动/停止/启用/停用；出于安全考虑，暂不开放网页创建任意命令任务。</div>
               </el-card>
-                </div>
-                <aside class="network-aside">
-                  <el-card shadow="never" class="network-card debug-card">
-                    <template #header>
-                      <div class="settings-card-head">
-                        <span>Debug 日志收集</span>
-                        <el-tag size="small" type="success" effect="plain">自动脱敏</el-tag>
-                      </div>
-                    </template>
-                    <div class="debug-intro">
-                      遇到异常时，一键收集版本、系统信息、最近日志、脱敏配置、数据库计数和网络诊断，生成 ZIP 后发送给技术支持分析。
-                    </div>
-                    <el-input
-                      v-model="debugNote"
-                      type="textarea"
-                      :rows="3"
-                      maxlength="1000"
-                      show-word-limit
-                      placeholder="可选：描述问题现象、发生时间、复现步骤"
-                      class="debug-note"
-                    />
-                    <el-button type="primary" class="debug-collect-btn" :loading="debugCollecting" @click="collectDebugBundle">
-                      收集 Debug 日志
-                    </el-button>
-                    <div v-if="debugBundle" class="debug-result">
-                      <div class="debug-result-main">
-                        <b>{{ debugBundle.name }}</b>
-                        <small>{{ formatBytes(debugBundle.size) }} · {{ formatDateTime(debugBundle.created_at) }}</small>
-                      </div>
-                      <el-button type="success" plain size="small" @click="downloadDebugBundle">下载 ZIP</el-button>
-                    </div>
-                    <div class="debug-tips">
-                      包含最近日志和网络诊断；不包含数据库备份、授权文件、明文密码、Token、API Key 或私钥。日志超过 20 份时自动清理旧诊断包。
-                    </div>
-                  </el-card>
-                </aside>
-              </div>
             </template>
+          </div>
+        </el-tab-pane>
+
+        <el-tab-pane label="Debug 日志" name="debug">
+          <div class="debug-tab-panel">
+            <el-card shadow="never" class="network-card debug-card">
+              <template #header>
+                <div class="settings-card-head">
+                  <span>Debug 日志收集</span>
+                  <el-tag size="small" type="success" effect="plain">自动脱敏</el-tag>
+                </div>
+              </template>
+              <div class="debug-intro">
+                遇到异常时，一键收集版本、系统信息、最近日志、脱敏配置、数据库计数和网络诊断，生成 ZIP 后发送给技术支持分析。
+              </div>
+              <el-input
+                v-model="debugNote"
+                type="textarea"
+                :rows="4"
+                maxlength="1000"
+                show-word-limit
+                placeholder="可选：描述问题现象、发生时间、复现步骤"
+                class="debug-note"
+              />
+              <el-button type="primary" class="debug-collect-btn" :loading="debugCollecting" @click="collectDebugBundle">
+                收集 Debug 日志
+              </el-button>
+              <div v-if="debugBundle" class="debug-result">
+                <div class="debug-result-main">
+                  <b>{{ debugBundle.name }}</b>
+                  <small>{{ formatBytes(debugBundle.size) }} · {{ formatDateTime(debugBundle.created_at) }}</small>
+                </div>
+                <el-button type="success" plain size="small" @click="downloadDebugBundle">下载 ZIP</el-button>
+              </div>
+              <div class="debug-tips">
+                包含最近日志和网络诊断；不包含数据库备份、授权文件、明文密码、Token、API Key 或私钥。日志超过 20 份时自动清理旧诊断包。
+              </div>
+            </el-card>
           </div>
         </el-tab-pane>
       </el-tabs>
@@ -2454,7 +2453,7 @@ const updateJobAlertType = computed(() => {
   return 'info'
 })
 const route = useRoute()
-const allowedTabs = ['basic', 'users', 'security', 'integration', 'collection', 'logforward', 'backup', 'status', 'startup', 'time', 'totp', 'cluster', 'network', 'update']
+const allowedTabs = ['basic', 'users', 'security', 'integration', 'collection', 'logforward', 'backup', 'status', 'startup', 'time', 'totp', 'cluster', 'network', 'debug', 'update']
 const activeTab = ref(allowedTabs.includes(String(route.query.tab || '')) ? String(route.query.tab) : 'status')
 
 watch(
@@ -5086,24 +5085,8 @@ onBeforeUnmount(() => {
 .network-stat b.ok { color: #1b9b6a; }
 .network-stat b.danger { color: #d9485f; }
 
-.network-layout {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) 330px;
-  gap: 16px;
-  align-items: start;
-}
-
-.network-main {
-  min-width: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 13px;
-}
-
-.network-aside {
-  min-width: 0;
-  position: sticky;
-  top: 12px;
+.debug-tab-panel {
+  max-width: 920px;
 }
 
 .network-card {
@@ -5168,14 +5151,6 @@ onBeforeUnmount(() => {
   line-height: 1.65;
 }
 
-@media (max-width: 1200px) {
-  .network-layout {
-    grid-template-columns: 1fr;
-  }
-  .network-aside {
-    position: static;
-  }
-}
 
 .network-note {
   margin-top: 8px;

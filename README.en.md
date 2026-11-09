@@ -2,7 +2,7 @@
 
 An operations and monitoring platform for network devices, security devices, infrastructure, websites, and virtualized environments. It provides asset management, SNMP collection, topology, dashboards, alerts, inspections, data-center visualization, website/certificate monitoring, AI operations, cascade management, and system administration.
 
-- Product version: **v2.22.23**
+- Product version: **v2.22.24**
 - License Studio: **v2.10.1**
 - Backend: Python 3.10+ / FastAPI / SQLAlchemy
 - Frontend: Vue 3 / Vite / Element Plus / ECharts / AntV X6
@@ -105,8 +105,8 @@ sudo dnf install -y python3 python3-pip tar curl unzip
 The release bundle includes a standalone Linux x86_64 Python 3.12 runtime compressed with xz, a static busybox extractor, all required Python wheels, and the built frontend. No Internet, system Python, pip, or apt/dnf package download is required.
 
 ```bash
-unzip IOP-v2.22.23.zip -d /tmp
-cd /tmp/IOP-v2.22.23
+unzip IOP-v2.22.24.zip -d /tmp
+cd /tmp/IOP-v2.22.24
 sudo bash deploy/apply-permissions.sh
 sudo bash deploy/install-offline.sh
 ```
@@ -116,8 +116,8 @@ Requirements: Linux x86_64, glibc 2.17+, systemd, and the base `tar`, `bash`, `c
 ### Install
 
 ```bash
-unzip IOP-v2.22.23.zip -d /tmp
-cd /tmp/IOP-v2.22.23
+unzip IOP-v2.22.24.zip -d /tmp
+cd /tmp/IOP-v2.22.24
 
 # Fix executable bits if the extraction tool dropped them
 bash deploy/apply-permissions.sh
@@ -325,7 +325,7 @@ sudo bash uninstall.sh --purge
 
 ### Debug diagnostics
 
-System Settings → Network → Debug log collection creates a redacted ZIP for support:
+Use the standalone **Debug logs** tab to the right of **Network** in System Settings to create a redacted ZIP for support:
 
 - Version, platform, disk and load;
 - Recent application logs and ERROR/Traceback summary;
@@ -339,7 +339,7 @@ Passwords, tokens, API keys, private keys, license files and database content ar
 ## 11. Directory layout
 
 ```text
-IOP-v2.22.23/
+IOP-v2.22.24/
 ├── backend/
 ├── frontend/
 ├── deploy/
@@ -377,4 +377,4 @@ See [LICENSE](LICENSE) for the full text. The release package includes `LICENSE`
 
 ## 14. Version
 
-This README corresponds to SNMP Monitor **v2.22.23**. Verify the server, network devices, database, and license before deployment.
+This README corresponds to SNMP Monitor **v2.22.24**. Verify the server, network devices, database, and license before deployment.

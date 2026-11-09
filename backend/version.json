@@ -1,10 +1,10 @@
 {
-  "version": "2.22.23",
-  "display_version": "2.22.23",
+  "version": "2.22.24",
+  "display_version": "2.22.24",
   "base_version": "2.18.43",
-  "build_number": 180,
-  "build": "20261109.105054",
-  "build_id": "2fd96514a6",
-  "built_at": "2026-11-09T02:50:54.469Z",
+  "build_number": 181,
+  "build": "20261109.110553",
+  "build_id": "4e124c545b",
+  "built_at": "2026-11-09T03:05:53.502Z",
   "source": "vite-build"
 }
