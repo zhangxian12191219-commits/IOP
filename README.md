@@ -4,19 +4,18 @@
 
 面向网络设备、安全设备、服务器、网站和虚拟化/容器环境的统一监控运维平台，覆盖资产管理、SNMP 采集、网络拓扑、3D 大屏、告警、巡检、配置备份、机房、MIB、AI 运维、级联和系统管理。
 
-- 当前版本：**v2.22.24**
+- 当前版本：**v2.22.37**
 - 授权签发平台：**License Studio v2.10.1**
 - 后端：Python 3.12 / FastAPI / SQLAlchemy
 - 前端：Vue 3 / Vite / Element Plus / ECharts / AntV X6
 - 数据库：PostgreSQL（自动供给，失败回退 SQLite）/ MySQL / SQLite
 - 缓存：Redis（自动供给，失败回退进程内缓存）
-- 部署：Linux systemd / Docker Compose / Windows 本地运行
+- 部署：Linux systemd / Docker Compose / Linux 离线包
 - 发布包：`IOP-v<版本>.zip`
 
 相关文档：
 
 - 英文说明：[README.en.md](README.en.md)
-- 离线安装：[README-OFFLINE.md](README-OFFLINE.md) / [English](README-OFFLINE.en.md)
 - 安全基线：[SECURITY.md](SECURITY.md)
 - 开发指南：[DEVELOPMENT.md](DEVELOPMENT.md)
 - 短信网关：[SMS-GATEWAY.md](SMS-GATEWAY.md)
@@ -52,6 +51,7 @@ IOP 用于统一纳管企业内网中的网络、安全和计算资源，把原�
 - CPU、内存、最高部件温度各自独立时间范围；
 - 设备类型、厂商、型号、位置、机房、机柜、U 位和功率；
 - 设备群组和对象级数据范围；
+- 厂商和型号作为资产识别关键字段，建议填写完整型号以精确匹配 MIB；
 - 资产导入、导出、复制、二维码标签和维保记录；
 - 戴尔 ME5 / PowerVault 存储 API-only 采集，读取控制器、磁盘、风扇、电源和端口。
 
@@ -92,7 +92,78 @@ IOP 用于统一纳管企业内网中的网络、安全和计算资源，把原�
 - 机房、机柜、U 位、功率和 3D 机房视图；
 - 机房容量、功率和上架风险提示。
 
-### 2.6 巡检、配置备份与凭据
+### 2.6 资产识别与 MIB 匹配
+
+- 设备表单统一标签宽度、双列栅格和输入控件宽度；
+- 厂商、型号字段标记为强烈建议填写；
+- 厂商支持内置选择和自定义输入；
+- 型号建议填写完整型号，例如 `S5735-L24T4S-A1`；
+- 厂商 + 型号用于 MIB 库智能匹配，填写完整可提升 CPU、内存、温度、电源等指标识别准确率；
+- 缺失时不强制阻断保存，但保存前会提示可能影响 MIB 识别。
+
+### 2.6.1 API 对接
+
+存储、备份一体机等无法完整通过 MIB 获取硬件状态的设备，统一选择“API 对接”：
+
+- 华为 OceanStor / Dorado；
+- H3C UniStor / ONEStor；
+- 爱数 AnyBackup；
+- 鼎甲 DBackup；
+- 宏杉 MacroSAN；
+- 北京腾凌；
+- 戴尔 PowerVault / ME 系列。
+
+对接原则：
+
+- 只执行只读 GET 和认证登录，不修改厂商设备配置；
+- 支持 Basic、Bearer Token、会话登录、自动探测；
+- 默认按厂商尝试常见 REST 认证/指标路径；
+- 不同固件可覆盖 `API 基础路径`、`登录路径`、`指标路径`；
+- 指标通过通用 JSON 字段提取 CPU、内存、温度、磁盘、电源等数据；
+- API 设备不再绑定 MIB，避免 SNMP/MIB 与 API 重复采集；
+- 测试连接可验证认证和指标端点，不写入设备。
+
+API 对接要求填写厂商、型号和只读账号。厂商/型号建议填写完整型号；API 具体端点受固件版本影响时，使用路径覆盖字段适配。
+
+### 2.6.2 厂商库
+
+厂商库是资产和 MIB 共用的厂商主数据，入口有两处：
+
+- MIB 管理 → 厂商库；
+- 设备编辑 → 厂商字段旁“厂商库”。
+
+能力：
+
+- 按名称、别名、备注查询；
+- 按分类筛选：网络设备、服务器、存储、备份一体机、安全设备、视频监控、虚拟化、其他；
+- 新增自定义厂商，维护中英文别名和备注；
+- 修改厂商名称时级联更新资产和 MIB，修正录入错误；
+- 停用厂商后资产表单不再显示，但历史资产保留原值；
+- 内置厂商不可删除，可停用；
+- 自定义厂商只有未被资产/MIB 引用时才允许删除；
+- 资产表单直接输入的新厂商会自动写入厂商库，后续可统一维护。
+
+设计原则：厂商主数据只保留一份，资产、MIB、API 适配器共用；删除采用“可停用 + 引用检查”，避免破坏历史数据。
+
+### 2.6.3 IPMI 对接
+
+服务器带外管理选择“IPMI 对接”：
+
+- IPMI 2.0（RMCP+）：协议 `lanplus`；
+- IPMI 1.5（RMCP，兼容 IPMI 1.0）：协议 `lan`；
+- 自动模式先尝试 RMCP+，失败后尝试 RMCP；
+- 采集电源状态、温度、风扇、电压、电流等只读传感器；
+- 需要服务器 BMC 已开启 IPMI over LAN；
+- 依赖主机安装 `ipmitool`，Linux 可执行 `dnf install ipmitool` 或 `apt install ipmitool`；
+- IPMI 密码使用现有加密机制保存，采集时通过 `IPMI_PASSWORD` 环境变量传给 ipmitool。
+
+IPMI 只读采集不修改服务器电源、启动项、用户或 SEL。
+
+### 2.6.4 API 对接范围
+
+API 对接仅用于存储设备和备份一体机。服务器请选择 IPMI 对接；表单已增加明确提示，避免把服务器误配为 API。
+
+### 2.7 巡检、配置备份与凭据
 
 - 设备巡检任务、执行记录、报告上传和下载；
 - 网络设备配置备份、差异对比和恢复；
@@ -100,7 +171,7 @@ IOP 用于统一纳管企业内网中的网络、安全和计算资源，把原�
 - 凭据密码加密保存，不回显明文；
 - 设备维保信息和维保记录。
 
-### 2.7 MIB 与系统工具
+### 2.8 MIB 与系统工具
 
 - MIB 上传、解析、对象查询和指标模板；
 - 设备 MIB 智能匹配；
@@ -108,7 +179,7 @@ IOP 用于统一纳管企业内网中的网络、安全和计算资源，把原�
 - Ping、端口、路由、抓包、SFTP 等诊断工具；
 - 戴尔 ME5 存储已改为 API-only，不再依赖 MIB 采集核心硬件指标。
 
-### 2.8 AI 智能运维
+### 2.9 AI 智能运维
 
 - 支持 OpenAI 兼容模型接口；
 - AI 只调用只读工具白名单；
@@ -121,7 +192,7 @@ IOP 用于统一纳管企业内网中的网络、安全和计算资源，把原�
 - AI 查询遵守资产群组范围；
 - 删除、修改、破解、提权类请求会被拒绝。
 
-### 2.9 诊断与问题反馈
+### 2.10 诊断与问题反馈
 
 - 系统配置 → “网络配置”右侧增加独立“Debug 日志”页签；
 - 一键收集版本、系统信息、最近日志、脱敏配置、数据库计数和网络诊断；
@@ -130,7 +201,7 @@ IOP 用于统一纳管企业内网中的网络、安全和计算资源，把原�
 - 生成 ZIP 后下载，发送给技术支持分析；
 - 诊断包保留最近 20 份，生成和下载操作写入审计日志。
 
-### 2.10 级联、集群与即时通信
+### 2.11 级联、集群与即时通信
 
 - 分支主动出站 WSS 连接总部；
 - 业务帧二次加密；
@@ -142,6 +213,91 @@ IOP 用于统一纳管企业内网中的网络、安全和计算资源，把原�
 ---
 
 ## 3. 当前版本改进
+
+### v2.22.37
+
+- 在线安装与离线安装合并到单一 README；
+- 新增保留数据卸载、彻底卸载和 Docker 卸载步骤；
+- 删除独立 README-OFFLINE 手册及引用；
+- 部署只需阅读 README.md（英文为 README.en.md）。
+
+### v2.22.36
+
+- 明确在线新装默认尝试 PostgreSQL + Redis，失败回退 SQLite/内存；
+- 离线安装根据 `offline/os-packages` 是否包含系统包决定默认数据库；
+- 所有手册补充初始密码文件的绝对路径和查看命令。
+
+### v2.22.35
+
+- 修复新装随机管理员初始密码可能不含特殊字符、无法通过密码策略的问题；
+- 初始密码现在保证包含大小写、数字和特殊字符；
+- 修改管理员密码后，请注意 `initial_admin_password.txt` 不再代表当前密码。
+
+### v2.22.34
+
+- 仅保留 Linux 部署支持，删除非 Linux 启动脚本和相关文档；
+- 安装、运行、排障命令统一为 Linux；
+- 删除非 Linux 启动脚本和本地运行章节；
+- 安装包只保留 Linux systemd / Docker / Linux 离线部署路径。
+
+### v2.22.33
+
+- 离线安装器支持无系统 `tar` 的精简 Linux，自动回退包内 busybox；
+- 离线安装默认不联网安装 PostgreSQL/Redis，使用 SQLite/内存缓存；
+- 接入与监控方式新增 IPMI 对接，面向服务器带外管理；
+- 支持 IPMI 2.0（RMCP+）和 IPMI 1.5（RMCP，兼容 IPMI 1.0）；
+- 支持自动尝试 RMCP+ / RMCP，采集电源、温度、风扇、电压等传感器；
+- IPMI 密码加密保存，通过环境变量传给 ipmitool，不出现在进程参数中；
+- API 对接表单增加范围提示：仅用于存储和备份一体机，服务器请使用 IPMI。
+
+### v2.22.31
+
+- 系统设置 → 系统更新 → 更新状态改为动态过程；
+- 增加实时进度条、当前步骤卡片和步骤说明；
+- 更新执行中显示脉冲指示灯、流光和旋转图标；
+- 显示已耗时/总耗时和自动刷新提示；
+- 成功/失败/回滚状态使用不同颜色和动画；
+- 任务结束后自动停止动画和计时。
+
+### v2.22.30
+
+- PostgreSQL 连接默认设置 10 分钟空闲事务超时，避免长期锁表阻塞升级迁移；
+- 系统服务启动超时从 60 秒提高到 300 秒，适配大型数据库迁移和 MIB 初始化；
+- 健康检查在服务 `activating` / `reloading` 时跳过重启，避免打断启动；
+- 新增 `PG_IDLE_IN_TRANSACTION_TIMEOUT_MS` 环境变量，可按部署调整。
+
+### v2.22.29
+
+- MIB 管理增加分页显示，默认每页 20 条，支持 10/20/50/100 条切换；
+- MIB 批量操作增加“批量归类”（厂商/型号/设备分类/备注）；
+- 新增厂商库，资产表单厂商从厂商库读取，不再只依赖前端硬编码；
+- 厂商库支持查询、分类筛选、启停、新增、改名和删除；
+- 修正厂商录入错误：改名会同步更新已引用资产和 MIB；
+- 被资产/MIB 引用的厂商不能直接删除，内置厂商不能删除，可停用；
+- 资产表单输入的新厂商会持久化到厂商库，可在厂商库中改名或删除。
+
+### v2.22.27
+
+- 接入与监控方式新增“API 对接”，存储/备份一体机统一走只读 REST API；
+- 内置华为、H3C、爱数、鼎甲、宏杉、北京腾凌、戴尔等厂商适配器；
+- 支持 Basic、Bearer Token、会话登录和自动探测四种认证方式；
+- 支持自定义 API 基础路径、登录路径和指标路径，适配不同固件版本；
+- API 指标统一进入设备详情，不再依赖 MIB；
+- 扩充厂商别名和 MIB 匹配归一化，继续提升可 SNMP 设备的识别率。
+
+### v2.22.26
+
+- 修复设备编辑表单内容被全局样式居中的问题；
+- 表单内容统一左对齐，标签、单选组、输入框和数值控件对齐；
+- 优化厂商/型号区域布局和辅助说明高度；
+- 保留厂商/型号强烈建议提示与保存前确认。
+
+### v2.22.25
+
+- 优化设备编辑/新增页面布局，统一标签宽度、栅格和数值控件宽度；
+- 资产信息区域强化“厂商/型号”提示，并增加保存前建议提醒；
+- 厂商和型号填写完整后，可更精准命中厂商 MIB 模板和指标；
+- 不阻断保存，只提醒缺失可能影响 MIB 识别准确率。
 
 ### v2.22.24
 
@@ -233,7 +389,7 @@ flowchart LR
 | 前端 | Vue 3、Vite、Element Plus、ECharts、AntV X6、Three.js |
 | 数据库 | PostgreSQL、MySQL、SQLite |
 | 缓存 | Redis、进程内缓存 |
-| 部署 | systemd、Docker Compose、Linux 离线包、Windows 本地运行 |
+| 部署 | systemd、Docker Compose、Linux 离线包 |
 | 安全 | HMAC-SHA256 JWT、PBKDF2 密码、Ed25519 授权、RBAC、审计日志 |
 | AI | OpenAI 兼容接口、只读工具调用、语音识别/TTS |
 
@@ -244,7 +400,7 @@ flowchart LR
 ### 5.1 Docker Compose
 
 ```bash
-cd IOP-v2.22.24
+cd IOP-v2.22.37
 cp .env.example .env
 ```
 
@@ -279,32 +435,139 @@ https://<服务器IP>/
 ### 5.2 Linux systemd
 
 ```bash
-cd IOP-v2.22.24
+cd IOP-v2.22.37
 sudo bash deploy/install-systemd.sh
 sudo systemctl status snmp-nms
 ```
 
-安装脚本会生成随机 `AUTH_SECRET`，管理员初始密码保存在：
+在线新装默认会尝试安装并对接 PostgreSQL + Redis；如果系统包或服务不可用，自动回退 SQLite + 进程内缓存并打印警告。旧环境已有 env 文件时不会自动切换数据库。
 
-```text
-data/initial_admin_password.txt
-```
-
-### 5.3 源码运行
+强制跳过或重试：
 
 ```bash
-cd IOP-v2.22.24
+# 只用 SQLite / 内存缓存
+sudo bash deploy/install-systemd.sh --no-postgres --no-redis
+
+# 强制尝试安装/对接
+sudo bash deploy/install-systemd.sh --with-postgres --with-redis
+```
+
+离线环境使用：
+
+```bash
+unzip IOP-v2.22.37.zip -d /tmp
+cd /tmp/IOP-v2.22.37
+sudo bash deploy/apply-permissions.sh
+sudo bash deploy/install-offline.sh
+```
+
+离线安装的数据库选择：
+
+- `offline/os-packages` 没有系统包：默认 SQLite + 进程内缓存；
+- 已放入 PostgreSQL/Redis 离线系统包：默认尝试安装并对接 PostgreSQL + Redis，失败自动回退；
+- 显式 `--no-postgres --no-redis` 可强制使用 SQLite/内存；
+- 显式 `--with-postgres --with-redis` 可强制尝试外部服务。
+
+精简系统没有 `tar` 时，安装脚本会自动使用包内静态 busybox。
+
+安装脚本会生成随机 `AUTH_SECRET`，管理员初始密码保存在绝对路径：
+
+```text
+/opt/snmp-monitor/data/initial_admin_password.txt
+```
+
+查看命令：
+
+```bash
+sudo cat /opt/snmp-monitor/data/initial_admin_password.txt
+```
+
+该文件只在初始安装时代表当前密码；后续手工重置管理员密码后，应以数据库中的新密码为准。
+
+### 5.3 离线安装补充
+
+离线包包含：
+
+- Linux x86_64 独立 CPython 3.12 运行时；
+- 静态 busybox；
+- 后端全部 Python wheels；
+- 已构建前端 `frontend/dist`；
+- systemd 安装脚本和依赖校验文件。
+
+安装前可校验：
+
+```bash
+cd /tmp/IOP-v2.22.37/offline
+sha256sum -c SHA256SUMS
+```
+
+系统要求：
+
+- Linux x86_64；
+- glibc 2.17 及以上；
+- systemd；
+- `bash`、`coreutils`、`sed`、`grep`、`awk`；
+- 系统没有 `tar` 时使用包内 `offline/bin/busybox tar`；
+- 不适用于 Alpine/musl 或 ARM。
+
+离线包没有系统包时使用 SQLite + 进程内缓存；放入 `offline/os-packages` 后默认尝试 PostgreSQL + Redis。IPMI 需要额外安装 `ipmitool`。
+
+### 5.4 源码运行
+
+```bash
+cd IOP-v2.22.37
 ./start.sh --build
 ```
 
 默认后端监听 `127.0.0.1:8000`，生产环境应通过内置 Web 网关或反向代理提供 HTTPS。
 
-### 5.4 Windows 本地运行
+### 5.5 卸载
 
-```powershell
-.\start-backend.ps1
-.\start-frontend.ps1
+先备份 data（尤其 SQLite、授权文件、上传文件和日志）：
+
+```bash
+sudo systemctl stop snmp-nms
+sudo cp -a /opt/snmp-monitor/data /root/snmp-monitor-data-backup-$(date +%F-%H%M%S)
 ```
+
+保留程序和 data，移除服务/环境变量/系统用户（推荐用于重装或排障）：
+
+```bash
+sudo bash /opt/snmp-monitor/uninstall.sh --keep-data
+```
+
+彻底删除程序和全部数据：
+
+```bash
+sudo bash /opt/snmp-monitor/uninstall.sh --purge
+```
+
+`--purge` 会删除程序目录、SQLite 数据库、授权文件、上传文件、日志和备份，不可恢复。脚本会要求输入 `DELETE` 二次确认。
+
+免二次确认仅用于明确知道后果的自动化场景：
+
+```bash
+sudo bash /opt/snmp-monitor/uninstall.sh --purge --yes
+```
+
+Docker Compose 卸载：
+
+```bash
+cd /opt/snmp-monitor
+# 保留数据卷
+docker compose down
+# 删除数据卷（数据库、上传、日志）
+docker compose down -v
+```
+
+卸载后检查：
+
+```bash
+systemctl status snmp-nms
+ls -ld /opt/snmp-monitor
+```
+
+脚本只清理本机部署内容；外部 PostgreSQL/Redis、Nginx/Caddy、防火墙和系统备份需单独清理。
 
 ---
 
@@ -314,7 +577,13 @@ cd IOP-v2.22.24
 - 未显式设置管理员密码时，随机密码保存在：
 
 ```text
-data/initial_admin_password.txt
+/opt/snmp-monitor/data/initial_admin_password.txt
+```
+
+查看命令：
+
+```bash
+sudo cat /opt/snmp-monitor/data/initial_admin_password.txt
 ```
 
 首次登录后必须修改密码。
@@ -484,7 +753,23 @@ GET /api/health
 
 权限要求：`settings:view`。当前系统配置页面仅超级管理员可访问。
 
-### 10.6 核心代码保护
+### 10.6 升级稳定性
+
+- PostgreSQL 连接使用 `idle_in_transaction_session_timeout`，默认 10 分钟；可由 `PG_IDLE_IN_TRANSACTION_TIMEOUT_MS` 调整；
+- systemd 服务 `TimeoutStartSec=300`，避免数据库迁移超过 60 秒被误杀；
+- 健康检查脚本发现服务处于 `activating` 或 `reloading` 时跳过本轮，不再在启动过程中重启服务；
+- 升级前建议确认没有长期 `idle in transaction` 连接；程序会在连接建立时应用空闲事务超时。
+
+已有部署若不是通过安装脚本更新 systemd 文件，需保留或创建 drop-in：
+
+```ini
+[Service]
+TimeoutStartSec=300
+```
+
+健康检查脚本位于 `/usr/local/bin/snmp-nms-healthcheck`，更新发布包后建议同步该脚本。
+
+### 10.7 核心代码保护
 
 发布构建会对以下核心服务模块执行保护：
 
@@ -494,6 +779,8 @@ auth.py
 ai_agent.py
 ai_ops.py
 storage_api.py
+api_collector.py
+ipmi_collector.py
 update_manager.py
 virtualization_crypto.py
 privilege.py
@@ -541,7 +828,7 @@ cd frontend && npm run build
 ## 12. 目录结构
 
 ```text
-IOP-v2.22.24/
+IOP-v2.22.37/
 ├── backend/                  FastAPI 后端
 ├── frontend/                 Vue 3 前端和构建产物
 ├── deploy/                   systemd、离线安装、Web 网关脚本
@@ -552,12 +839,9 @@ IOP-v2.22.24/
 ├── docker-compose.yml
 ├── Dockerfile
 ├── start.sh
-├── start-backend.ps1
-├── start-frontend.ps1
 ├── uninstall.sh
 ├── README.md
 ├── README.en.md
-├── README-OFFLINE.md
 ├── SECURITY.md
 ├── DEVELOPMENT.md
 └── SMS-GATEWAY.md
@@ -621,7 +905,7 @@ MPL-2.0 允许使用、修改和分发本项目，修改后的 MPL 覆盖文件�
 
 ## 15. 版本
 
-当前版本：**v2.22.24**
+当前版本：**v2.22.37**
 
 ```text
 后端：Python 3.12 / FastAPI

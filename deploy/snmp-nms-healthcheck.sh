@@ -14,6 +14,13 @@ log() {
   echo "[$(date '+%F %T')] $*"
 }
 
+# 服务正在启动/重载时不要重启；数据库迁移可能持续数分钟。
+state=$(systemctl show -p ActiveState --value "$SERVICE" 2>/dev/null || true)
+if [[ "$state" == "activating" || "$state" == "reloading" ]]; then
+  log "服务处于 $state，跳过本轮健康检查重启"
+  exit 0
+fi
+
 if curl -fsS --max-time "$TIMEOUT" "$URL" >/dev/null 2>&1; then
   exit 0
 fi

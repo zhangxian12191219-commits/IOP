@@ -1748,20 +1748,56 @@
             </div>
 
             <el-divider content-position="left">更新状态</el-divider>
-            <div v-if="updateJob" class="update-job">
-              <el-steps :active="updateStep" finish-status="success" :process-status="updateProcessStatus" align-center>
-                <el-step title="备份" />
-                <el-step title="替换文件" />
-                <el-step title="安装依赖" />
-                <el-step title="重启服务" />
-                <el-step title="健康检查" />
+            <div v-if="updateJob" class="update-job" :class="updateJobClass">
+              <div class="update-live-head">
+                <div class="update-live-title">
+                  <span class="update-live-dot" :class="{ active: updateActive, success: updateJob.status === 'success', error: updateFailed }" />
+                  <strong>{{ updateStageTitle }}</strong>
+                  <el-tag size="small" effect="plain" :type="updateStatusTagType">{{ updateStatusText }}</el-tag>
+                </div>
+                <div class="update-elapsed">
+                  <el-icon><Timer /></el-icon>
+                  <span>{{ updateActive ? '已耗时' : '总耗时' }} {{ updateElapsedText }}</span>
+                  <span v-if="updateActive" class="update-auto-refresh">自动刷新中</span>
+                </div>
+              </div>
+
+              <el-progress
+                class="update-progress"
+                :percentage="updatePercent"
+                :status="updateProgressStatus"
+                :stroke-width="10"
+                :striped="updateActive"
+                :striped-flow="updateActive"
+                :duration="0.6"
+              />
+
+              <div class="update-stage-card" :class="{ active: updateActive, success: updateJob.status === 'success', error: updateFailed }">
+                <div class="update-stage-icon" :class="{ active: updateActive }">
+                  <el-icon v-if="updateActive"><Loading /></el-icon>
+                  <el-icon v-else-if="updateJob.status === 'success'"><CircleCheck /></el-icon>
+                  <el-icon v-else><CircleClose /></el-icon>
+                </div>
+                <div class="update-stage-copy">
+                  <b>{{ updateStageTitle }}</b>
+                  <span>{{ updateStageHint }}</span>
+                </div>
+                <div class="update-stage-percent">{{ updatePercent }}%</div>
+              </div>
+
+              <el-steps :active="updateStep" finish-status="success" :process-status="updateProcessStatus" align-center class="update-steps">
+                <el-step title="备份" description="保存当前程序与数据" />
+                <el-step title="替换文件" description="校验并写入新版本" />
+                <el-step title="安装依赖" description="检查 Python 依赖" />
+                <el-step title="重启服务" description="systemd 重新加载" />
+                <el-step title="健康检查" description="确认新版本可用" />
               </el-steps>
               <el-alert
                 class="update-job-alert"
                 :type="updateJobAlertType"
                 :closable="false"
                 show-icon
-                :title="updateJob.message || updateJob.status"
+                :title="updateJob.message || updateStatusText"
                 :description="`${updateJob.current_version || '-'} → ${updateJob.new_version || '-'} · 任务 ${updateJob.job_id || ''}`"
               />
               <div v-if="updateJob.error" class="update-error">{{ updateJob.error }}</div>
@@ -2439,13 +2475,85 @@ let updatePollTimer = null
 let updatePollCount = 0
 let updateAuthFailures = 0
 
+const updateElapsedNow = ref(Date.now())
+let updateElapsedTimer = null
+const UPDATE_STAGE_META = {
+  queued: { title: '排队等待', hint: '更新任务已创建，正在校验更新包。', percent: 4 },
+  backup: { title: '正在备份', hint: '正在保存当前程序文件和数据库，完成后自动替换。', percent: 18 },
+  applying: { title: '正在替换文件', hint: '正在校验并写入新版本文件，请保持服务运行。', percent: 45 },
+  dependencies: { title: '正在安装依赖', hint: '正在检查并安装新版本所需的 Python 依赖。', percent: 62 },
+  restarting: { title: '正在重启服务', hint: '服务正在重启，页面会自动重连并继续读取进度。', percent: 82 },
+  rollback: { title: '正在回滚', hint: '更新未通过，正在恢复更新前的程序和数据库。', percent: 35 },
+  success: { title: '更新完成', hint: '新版本已启动并通过健康检查。', percent: 100 },
+  failed: { title: '更新失败', hint: '更新未完成，请查看错误信息或升级日志。', percent: 45 },
+  rolled_back: { title: '已回滚', hint: '更新未完成，系统已恢复到更新前版本。', percent: 25 },
+}
+const updateActive = computed(() => Boolean(updateJob.value && !['success', 'failed', 'rolled_back'].includes(updateJob.value.status)))
+const updateFailed = computed(() => ['failed', 'rolled_back'].includes(updateJob.value?.status))
+const updateStageTitle = computed(() => UPDATE_STAGE_META[updateJob.value?.status]?.title || updateJob.value?.status || '更新任务')
+const updateStageHint = computed(() => UPDATE_STAGE_META[updateJob.value?.status]?.hint || updateJob.value?.message || '正在等待更新状态')
+const updatePercent = computed(() => {
+  if (updateJob.value?.status === 'success') return 100
+  const meta = UPDATE_STAGE_META[updateJob.value?.status]
+  return Math.max(0, Math.min(100, Number(meta?.percent ?? 0)))
+})
+const updateStatusText = computed(() => ({
+  queued: '排队中',
+  backup: '备份中',
+  applying: '替换中',
+  dependencies: '安装依赖',
+  restarting: '重启中',
+  rollback: '回滚中',
+  success: '成功',
+  failed: '失败',
+  rolled_back: '已回滚',
+}[updateJob.value?.status] || updateJob.value?.status || '未知'))
+const updateStatusTagType = computed(() => {
+  if (updateJob.value?.status === 'success') return 'success'
+  if (updateFailed.value) return 'danger'
+  if (updateJob.value?.status === 'rollback') return 'warning'
+  return 'primary'
+})
+const updateProgressStatus = computed(() => {
+  if (updateJob.value?.status === 'success') return 'success'
+  if (updateFailed.value) return 'exception'
+  return undefined
+})
+const updateJobClass = computed(() => ({
+  'is-active': updateActive.value,
+  'is-success': updateJob.value?.status === 'success',
+  'is-failed': updateFailed.value,
+}))
 const updateStep = computed(() => {
   const status = updateJob.value?.status
   return ({ queued: 0, backup: 1, applying: 2, dependencies: 3, restarting: 4, rollback: 4, success: 5, failed: 2, rolled_back: 2 }[status] ?? 0)
 })
-const updateProcessStatus = computed(() => (
-  ['failed', 'rolled_back'].includes(updateJob.value?.status) ? 'error' : 'process'
-))
+const updateProcessStatus = computed(() => {
+  if (updateJob.value?.status === 'success') return 'success'
+  if (updateFailed.value) return 'error'
+  return 'process'
+})
+const updateElapsedText = computed(() => {
+  const raw = updateJob.value?.created_at || updateJob.value?.updated_at
+  const start = raw ? Date.parse(raw) : NaN
+  if (!Number.isFinite(start)) return '—'
+  const endRaw = updateActive.value ? updateElapsedNow.value : (updateJob.value?.updated_at ? Date.parse(updateJob.value.updated_at) : Date.now())
+  const end = Number.isFinite(endRaw) ? endRaw : Date.now()
+  const seconds = Math.max(0, Math.floor((end - start) / 1000))
+  if (seconds < 60) return `${seconds} 秒`
+  if (seconds < 3600) return `${Math.floor(seconds / 60)} 分 ${seconds % 60} 秒`
+  return `${Math.floor(seconds / 3600)} 小时 ${Math.floor((seconds % 3600) / 60)} 分`
+})
+function syncUpdateClock() {
+  updateElapsedNow.value = Date.now()
+  if (updateActive.value && !updateElapsedTimer) {
+    updateElapsedTimer = setInterval(() => { updateElapsedNow.value = Date.now() }, 1000)
+  } else if (!updateActive.value && updateElapsedTimer) {
+    clearInterval(updateElapsedTimer)
+    updateElapsedTimer = null
+  }
+}
+watch(() => updateJob.value?.status, syncUpdateClock, { immediate: true })
 const updateJobAlertType = computed(() => {
   const status = updateJob.value?.status
   if (status === 'success') return 'success'
@@ -4506,6 +4614,7 @@ onMounted(async () => {
 
 onBeforeUnmount(() => {
   if (updatePollTimer) clearTimeout(updatePollTimer)
+  if (updateElapsedTimer) clearInterval(updateElapsedTimer)
   if (timeClockTimer) clearInterval(timeClockTimer)
   if (copyrightPrivilegeTimer) clearInterval(copyrightPrivilegeTimer)
 })
@@ -5304,11 +5413,179 @@ onBeforeUnmount(() => {
 }
 
 .update-job {
+  position: relative;
+  margin-top: 16px;
+  padding: 16px;
+  border: 1px solid #e4edf5;
+  border-radius: 12px;
+  background: linear-gradient(135deg, #fbfdff 0%, #f7fbfd 100%);
+  overflow: hidden;
+  transition: border-color .25s ease, box-shadow .25s ease;
+}
+.update-job.is-active {
+  border-color: #a9d7ee;
+  box-shadow: 0 5px 20px rgba(39, 126, 172, .08);
+}
+.update-job.is-active::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: -40%;
+  width: 40%;
+  height: 2px;
+  background: linear-gradient(90deg, transparent, #35a7dc, transparent);
+  animation: update-top-flow 2.2s linear infinite;
+}
+.update-job.is-success { border-color: #b7e3d2; }
+.update-job.is-failed { border-color: #f0c4c4; }
+.update-live-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-bottom: 12px;
+}
+.update-live-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: #244c65;
+  font-size: 14px;
+}
+.update-live-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #9db4c3;
+  flex: 0 0 auto;
+}
+.update-live-dot.active {
+  background: #1d9ed8;
+  box-shadow: 0 0 0 0 rgba(29, 158, 216, .45);
+  animation: update-dot-pulse 1.6s ease-out infinite;
+}
+.update-live-dot.success { background: #26a269; }
+.update-live-dot.error { background: #d94b4b; }
+.update-elapsed {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  color: #6e8797;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+.update-auto-refresh {
+  margin-left: 5px;
+  padding: 1px 6px;
+  border-radius: 8px;
+  background: #eaf6fb;
+  color: #2d8fb8;
+  font-size: 10px;
+}
+.update-progress { margin: 2px 0 12px; }
+.update-stage-card {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 11px 13px;
+  margin-bottom: 15px;
+  border: 1px solid #e4eef5;
+  border-radius: 9px;
+  background: #fff;
+  overflow: hidden;
+}
+.update-stage-card.active {
+  border-color: #cbe7f3;
+  background: linear-gradient(105deg, #f5fcff, #ffffff 55%, #f3fbff);
+}
+.update-stage-card.active::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: -30%;
+  width: 25%;
+  background: linear-gradient(90deg, transparent, rgba(255,255,255,.75), transparent);
+  transform: skewX(-18deg);
+  animation: update-card-sheen 2.8s ease-in-out infinite;
+}
+.update-stage-card.success { border-color: #c8e9da; background: #f5fcf8; }
+.update-stage-card.error { border-color: #f2d0d0; background: #fff8f8; }
+.update-stage-icon {
+  width: 34px;
+  height: 34px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  border-radius: 9px;
+  background: #eef7fb;
+  color: #2a93bf;
+  font-size: 18px;
+}
+.update-stage-card.active .update-stage-icon { color: #1689bd; }
+.update-stage-card.success .update-stage-icon { background: #e7f7ef; color: #269b67; }
+.update-stage-card.error .update-stage-icon { background: #fdeeee; color: #cc4747; }
+.update-stage-icon.active .el-icon { animation: update-icon-spin 1.25s linear infinite; }
+.update-stage-copy {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  flex: 1;
+}
+.update-stage-copy b { color: #2b536a; font-size: 13px; }
+.update-stage-copy span { color: #758a98; font-size: 11px; line-height: 1.5; }
+.update-stage-percent {
+  color: #2a93bf;
+  font-size: 18px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+.update-stage-card.success .update-stage-percent { color: #299a68; }
+.update-stage-card.error .update-stage-percent { color: #c44e4e; }
+.update-steps { margin-top: 4px; }
+.update-steps :deep(.el-step__description) {
+  padding: 0 8px;
+  color: #91a3af;
+  font-size: 10px;
+  line-height: 1.4;
+}
+.update-steps :deep(.el-step__head.is-process .el-step__icon) {
+  box-shadow: 0 0 0 4px rgba(29, 158, 216, .12);
+  animation: update-step-pulse 1.8s ease-in-out infinite;
+}
+.update-job-alert {
   margin-top: 16px;
 }
-
-.update-job-alert {
-  margin-top: 20px;
+@keyframes update-dot-pulse {
+  0% { box-shadow: 0 0 0 0 rgba(29, 158, 216, .45); }
+  70% { box-shadow: 0 0 0 7px rgba(29, 158, 216, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(29, 158, 216, 0); }
+}
+@keyframes update-top-flow {
+  from { left: -40%; }
+  to { left: 100%; }
+}
+@keyframes update-card-sheen {
+  0%, 55% { left: -30%; }
+  80%, 100% { left: 120%; }
+}
+@keyframes update-icon-spin {
+  to { transform: rotate(360deg); }
+}
+@keyframes update-step-pulse {
+  0%, 100% { box-shadow: 0 0 0 3px rgba(29, 158, 216, .10); }
+  50% { box-shadow: 0 0 0 6px rgba(29, 158, 216, .18); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .update-job.is-active::before,
+  .update-live-dot.active,
+  .update-stage-card.active::after,
+  .update-stage-icon.active .el-icon,
+  .update-steps :deep(.el-step__head.is-process .el-step__icon) { animation: none; }
 }
 
 .update-error {

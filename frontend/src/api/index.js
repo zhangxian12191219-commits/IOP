@@ -94,6 +94,12 @@ export const assetApi = {
   testProbe(data) {
     return api.post('/assets/test-probe', data, { timeout: 30000 })
   },
+  testApi(data) {
+    return api.post('/assets/test-api', data, { timeout: 60000 })
+  },
+  testIpmi(data) {
+    return api.post('/assets/test-ipmi', data, { timeout: 45000 })
+  },
   testOid(data) {
     return api.post('/snmp/test-oid', data, { timeout: 60000 })
   },
@@ -760,8 +766,33 @@ export const mibApi = {
   batchDelete(ids) {
     return api.delete('/mibs/batch/delete', { data: { ids } })
   },
+  batchUpdate(data) {
+    return api.post('/mibs/batch/update', data)
+  },
   assignDevices(id, deviceIds) {
     return api.post(`/mibs/${id}/devices/assign`, { device_ids: deviceIds })
+  },
+}
+
+// 厂商库
+export const vendorApi = {
+  options() {
+    return api.get('/vendors/options')
+  },
+  categories() {
+    return api.get('/vendors/categories')
+  },
+  list(params) {
+    return api.get('/vendors', { params })
+  },
+  create(data) {
+    return api.post('/vendors', data)
+  },
+  update(id, data) {
+    return api.put(`/vendors/${id}`, data)
+  },
+  remove(id) {
+    return api.delete(`/vendors/${id}`)
   },
 }
 

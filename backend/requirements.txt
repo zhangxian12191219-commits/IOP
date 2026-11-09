@@ -27,9 +27,9 @@ redis>=5.0.0
 paramiko==3.5.1
 # 虚拟化管理：VMware vCenter 只读采集
 pyvmomi>=8.0.3.0
-# 系统工具：网络抓包与分析（Windows 需安装 Npcap）
+# 系统工具：网络抓包与分析（Linux 需 libpcap）
 scapy>=2.5.0
-# 系统配置：主机 CPU / 内存 / 磁盘 / 网卡状态（Windows/Linux）
+# 系统配置：主机 CPU / 内存 / 磁盘 / 网卡状态
 psutil>=5.9.0
 # 串口 GSM 短信模块、RS485 温湿度传感器
 pyserial>=3.5

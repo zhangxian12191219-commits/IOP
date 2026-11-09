@@ -14,8 +14,6 @@ FILES=(
   uninstall.sh
   run_backend.py
   seed_demo.py
-  start-backend.ps1
-  start-frontend.ps1
   deploy/install-systemd.sh
   deploy/snmp-nms-healthcheck.sh
   deploy/apply-permissions.sh

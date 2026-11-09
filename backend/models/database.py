@@ -38,6 +38,16 @@ else:
     )
     if _IS_MYSQL:
         _engine_kwargs["connect_args"] = {"charset": "utf8mb4"}
+    elif _IS_POSTGRES:
+        # 防止异常请求/后台任务把连接留在 idle in transaction，长期持有表锁，
+        # 导致后续升级的 ADD COLUMN 等迁移无限等待。默认 10 分钟。
+        try:
+            _idle_ms = max(60000, int(os.getenv("PG_IDLE_IN_TRANSACTION_TIMEOUT_MS", "600000")))
+        except ValueError:
+            _idle_ms = 600000
+        _engine_kwargs["connect_args"] = {
+            "options": f"-c idle_in_transaction_session_timeout={_idle_ms}",
+        }
 
 engine = create_engine(_URL, **_engine_kwargs)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
@@ -76,6 +86,7 @@ try:  # noqa: SIM105
     from .mib_auto import MibMatchProfile  # noqa: E402,F401
     from .cascade import CascadeNode, CascadeMessage  # noqa: E402,F401
     from .mib import MibFile, MibObject  # noqa: E402,F401
+    from .vendor import Vendor  # noqa: E402,F401
     from .settings import SystemSetting  # noqa: E402,F401
     from .audit import AuditLog, LoginAttempt  # noqa: E402,F401
     from .capture import CaptureRecord  # noqa: E402,F401

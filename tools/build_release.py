@@ -38,7 +38,7 @@ EXCLUDED_FILES = {
     "snmp_monitor.db-wal", ".DS_Store",
 }
 EXCLUDED_SUFFIXES = (".pyc", ".db", ".db-shm", ".db-wal", ".sqlite", ".sqlite3", ".bak")
-EXECUTABLE_SUFFIXES = (".sh", ".ps1", ".bat", ".command")
+EXECUTABLE_SUFFIXES = (".sh", ".command")
 EXECUTABLE_FILES = {
     "run_backend.py",
     "seed_demo.py",
@@ -82,7 +82,7 @@ def _copy_tree(source: Path, target: Path) -> None:
             _copy_tree(child, destination)
         else:
             if child.suffix.lower() == ".sh":
-                # 发布包中的 Shell 脚本必须是 LF，避免 Windows 构建产生 CRLF
+                # 发布包中的 Shell 脚本必须是 LF，避免构建环境产生 CRLF
                 destination.write_bytes(child.read_bytes().replace(b"\r\n", b"\n").replace(b"\r", b"\n"))
                 if _is_executable(child):
                     try:

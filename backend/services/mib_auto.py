@@ -46,6 +46,10 @@ VENDOR_ALIASES = {
     "dbappsecurity": "DBAPPSecurity",
     "山石": "Hillstone", "hillstone": "Hillstone", "aruba": "Aruba",
     "神州数码": "DigitalChina", "digitalchina": "DigitalChina",
+    "爱数": "AISHU", "aishu": "AISHU", "anybackup": "AISHU",
+    "鼎甲": "Dingjia", "dingjia": "Dingjia", "dbackup": "Dingjia",
+    "宏杉": "MacroSAN", "macrosan": "MacroSAN",
+    "腾凌": "Tengling", "tengling": "Tengling",
 }
 CATEGORY_WORDS = {
     "cpu": ("cpu", "处理器", "processor", "load"),

@@ -16,7 +16,7 @@ SKIP_DIRS = {
 }
 TEXT_SUFFIXES = {
     ".py", ".js", ".vue", ".ts", ".json", ".md", ".txt", ".yml", ".yaml",
-    ".sh", ".ps1", ".bat", ".conf", ".ini", ".toml", ".html", ".css",
+    ".sh", ".conf", ".ini", ".toml", ".html", ".css",
     ".example", ".env",
 }
 BLOCKED_NAMES = {

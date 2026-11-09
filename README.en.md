@@ -2,13 +2,13 @@
 
 An operations and monitoring platform for network devices, security devices, infrastructure, websites, and virtualized environments. It provides asset management, SNMP collection, topology, dashboards, alerts, inspections, data-center visualization, website/certificate monitoring, AI operations, cascade management, and system administration.
 
-- Product version: **v2.22.24**
+- Product version: **v2.22.37**
 - License Studio: **v2.10.1**
 - Backend: Python 3.10+ / FastAPI / SQLAlchemy
 - Frontend: Vue 3 / Vite / Element Plus / ECharts / AntV X6
 - Database: SQLite (default) / MySQL / PostgreSQL
 - Cache: Redis (optional)
-- Deployment: Linux systemd / Docker Compose / Windows local run
+- Deployment: Linux systemd / Docker Compose / Linux offline package
 - UI languages: Simplified Chinese, Traditional Chinese, English, Japanese, Korean, German, French, Spanish, Portuguese (Brazil), Russian, Arabic, Hindi
 
 > Release package abbreviation: **IOP** (Intelligent Operations Platform). Packages and release directories are named `IOP-v<version>`.
@@ -105,19 +105,19 @@ sudo dnf install -y python3 python3-pip tar curl unzip
 The release bundle includes a standalone Linux x86_64 Python 3.12 runtime compressed with xz, a static busybox extractor, all required Python wheels, and the built frontend. No Internet, system Python, pip, or apt/dnf package download is required.
 
 ```bash
-unzip IOP-v2.22.24.zip -d /tmp
-cd /tmp/IOP-v2.22.24
+unzip IOP-v2.22.37.zip -d /tmp
+cd /tmp/IOP-v2.22.37
 sudo bash deploy/apply-permissions.sh
 sudo bash deploy/install-offline.sh
 ```
 
-Requirements: Linux x86_64, glibc 2.17+, systemd, and the base `tar`, `bash`, `coreutils`, `sed`, `grep`, and `awk` commands. See `README-OFFLINE.md` and `offline/README.md`.
+Requirements: Linux x86_64, glibc 2.17+, systemd, bash/coreutils/sed/grep/awk. If system `tar` is missing, the bundled `offline/bin/busybox tar` is used. Offline installs use SQLite and the in-process cache when `offline/os-packages` is empty; with PostgreSQL/Redis packages present they are attempted by default.
 
 ### Install
 
 ```bash
-unzip IOP-v2.22.24.zip -d /tmp
-cd /tmp/IOP-v2.22.24
+unzip IOP-v2.22.37.zip -d /tmp
+cd /tmp/IOP-v2.22.37
 
 # Fix executable bits if the extraction tool dropped them
 bash deploy/apply-permissions.sh
@@ -210,23 +210,6 @@ docker compose down
 
 `docker compose down -v` deletes the database and application volumes. Back up first.
 
-## 5. Windows local run
-
-```powershell
-py -3.12 -m venv .venv
-.\.venv\Scripts\Activate.ps1
-python -m pip install -r backend\requirements.txt
-python run_backend.py 8000
-```
-
-or:
-
-```powershell
-.\start-backend.ps1 8000
-```
-
-Open `http://127.0.0.1:8000/`.
-
 ## 6. Configuration
 
 systemd environment file:
@@ -305,15 +288,43 @@ Restore: stop the service, restore `data/` and the database, then start the serv
 
 ## 9. Uninstall
 
-```bash
-sudo bash uninstall.sh --keep-data
-```
+Back up first:
 
 ```bash
-sudo bash uninstall.sh --purge
+sudo systemctl stop snmp-nms
+sudo cp -a /opt/snmp-monitor/data /root/snmp-monitor-data-backup-$(date +%F-%H%M%S)
 ```
 
-`--purge` removes the program, database, license, uploads, and logs. Back up first.
+Keep program and data, remove service/env/system user:
+
+```bash
+sudo bash /opt/snmp-monitor/uninstall.sh --keep-data
+```
+
+Remove program and all data:
+
+```bash
+sudo bash /opt/snmp-monitor/uninstall.sh --purge
+```
+
+`--purge` removes the program directory, SQLite database, license, uploads, logs and backups. It is irreversible and asks for `DELETE` confirmation. `--purge --yes` skips confirmation and must only be used when the consequences are fully understood.
+
+Docker Compose:
+
+```bash
+cd /opt/snmp-monitor
+docker compose down      # keep volumes
+docker compose down -v   # remove database/upload/log volumes
+```
+
+After uninstall, check:
+
+```bash
+systemctl status snmp-nms
+ls -ld /opt/snmp-monitor
+```
+
+External PostgreSQL/Redis, Nginx/Caddy, firewall rules and system backups must be cleaned separately.
 
 ## 10. Observability
 
@@ -339,7 +350,7 @@ Passwords, tokens, API keys, private keys, license files and database content ar
 ## 11. Directory layout
 
 ```text
-IOP-v2.22.24/
+IOP-v2.22.37/
 ├── backend/
 ├── frontend/
 ├── deploy/
@@ -377,4 +388,4 @@ See [LICENSE](LICENSE) for the full text. The release package includes `LICENSE`
 
 ## 14. Version
 
-This README corresponds to SNMP Monitor **v2.22.24**. Verify the server, network devices, database, and license before deployment.
+This README corresponds to SNMP Monitor **v2.22.37**. Verify the server, network devices, database, and license before deployment.

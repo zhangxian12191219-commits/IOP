@@ -1,13 +1,13 @@
 # 离线系统包目录
 
-离线部署 PostgreSQL/Redis 时，把目标发行版及其架构对应的系统包放到：
+离线部署 PostgreSQL/Redis/IPMI 时，把目标发行版及其架构对应的系统包放到：
 
 ```text
 offline/os-packages/debian/*.deb   # Debian / Ubuntu
 offline/os-packages/rhel/*.rpm     # RHEL / AlmaLinux / openEuler / Kylin
 ```
 
-安装脚本会优先用 `dpkg -i` 或 `rpm -Uvh --replacepkgs` 安装这些本地包；如果目录为空，不会伪造 PostgreSQL/Redis 安装成功，而是明确警告并回退 SQLite / 进程内缓存。
+安装脚本会优先用 `dpkg -i` 或 `rpm -Uvh --replacepkgs` 安装这些本地包；如果目录为空，不会伪造 PostgreSQL/Redis 安装成功，而是明确警告并回退 SQLite / 进程内缓存。IPMI 需要 `ipmitool` 系统包。
 
 ## 生成系统包
 

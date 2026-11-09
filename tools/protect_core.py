@@ -23,6 +23,8 @@ CORE_MODULES: tuple[str, ...] = (
     "backend/services/ai_agent.py",
     "backend/services/ai_ops.py",
     "backend/services/storage_api.py",
+    "backend/services/api_collector.py",
+    "backend/services/ipmi_collector.py",
     "backend/services/update_manager.py",
     "backend/services/virtualization_crypto.py",
     "backend/services/privilege.py",

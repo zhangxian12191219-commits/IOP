@@ -46,7 +46,7 @@
 
       <!-- 关键指标卡片 -->
       <el-row :gutter="16" class="metric-cards">
-        <template v-if="isSnmpDevice">
+        <template v-if="hasMetricsDevice">
         <el-col :span="4">
           <div class="mcard" :class="metricAlertClass('cpu_usage')">
             <div class="mcard-label">CPU</div>
@@ -132,7 +132,7 @@
         </template>
       </el-row>
 
-      <div v-if="isSnmpDevice" class="hardware-strip">
+      <div v-if="hasMetricsDevice" class="hardware-strip">
         <div class="hardware-item" :class="metricAlertClass('disk_usage')">
           <div class="hardware-label">磁盘容量</div>
           <div class="hardware-value">{{ hardwareInfo.diskCapacity }}</div>
@@ -224,7 +224,7 @@
               {{ device?.power_watts ? device.power_watts + ' W' : '-' }}
             </el-descriptions-item>
             <el-descriptions-item label="接入方式">
-              <el-tag size="small" :type="monitorType === 'snmp' ? 'info' : 'success'">{{ monitorTypeText }}</el-tag>
+              <el-tag size="small" :type="monitorType === 'snmp' ? 'info' : (monitorType === 'api' ? 'warning' : 'success')">{{ monitorTypeText }}</el-tag>
             </el-descriptions-item>
             <template v-if="isSnmpDevice">
               <el-descriptions-item :label="t('device.snmpVersion')">{{ device?.snmp_version || '-' }}</el-descriptions-item>
@@ -259,6 +259,18 @@
                 </el-button>
               </el-descriptions-item>
             </template>
+            <template v-else-if="isApiDevice">
+              <el-descriptions-item label="API 地址">{{ device?.ip_address }}:{{ device?.storage_api_port || 443 }}</el-descriptions-item>
+              <el-descriptions-item label="API 认证">{{ device?.api_auth_type || 'auto' }}</el-descriptions-item>
+              <el-descriptions-item label="API 基础路径">{{ device?.api_base_path || '按厂商自动探测' }}</el-descriptions-item>
+              <el-descriptions-item label="监控说明">统一 API 只读采集，不依赖 MIB</el-descriptions-item>
+            </template>
+            <template v-else-if="isIpmiDevice">
+              <el-descriptions-item label="IPMI 地址">{{ device?.ip_address }}:{{ device?.ipmi_port || 623 }}</el-descriptions-item>
+              <el-descriptions-item label="IPMI 协议">{{ device?.ipmi_protocol || 'auto' }}</el-descriptions-item>
+              <el-descriptions-item label="IPMI 用户名">{{ device?.ipmi_username || '-' }}</el-descriptions-item>
+              <el-descriptions-item label="监控说明">IPMI 只读采集，支持 RMCP / RMCP+</el-descriptions-item>
+            </template>
             <template v-else>
               <el-descriptions-item label="探测目标">{{ device?.ip_address }}<template v-if="monitorType === 'tcp'">:{{ device?.tcp_port || 80 }}</template></el-descriptions-item>
               <el-descriptions-item label="监控说明">{{ monitorType === 'tcp' ? '仅监控 TCP 端口连通性' : '仅监控 ICMP 连通性' }}</el-descriptions-item>
@@ -277,7 +289,7 @@
           <el-descriptions-item :label="t('device.maintenanceContact')">{{ device?.maintenance_contact || '-' }}</el-descriptions-item>
           <el-descriptions-item :label="t('device.maintenancePhone')">{{ device?.maintenance_phone || '-' }}</el-descriptions-item>
           </el-descriptions>
-        <div v-if="isSnmpDevice && hasServerComponents" class="server-components-panel">
+        <div v-if="hasMetricsDevice && hasServerComponents" class="server-components-panel">
           <div class="server-components-head">
             <div>
               <strong>服务器组件明细</strong>
@@ -348,7 +360,7 @@
 
         </el-tab-pane>
 
-        <el-tab-pane v-if="isSnmpDevice" label="CPU" name="cpu">
+        <el-tab-pane v-if="hasMetricsDevice" label="CPU" name="cpu">
           <div class="time-filter">
             <span class="time-filter-label">{{ t('device.timeRange') }}</span>
             <el-button-group>
@@ -361,7 +373,7 @@
           <div ref="cpuChartRef" class="chart"></div>
         </el-tab-pane>
 
-        <el-tab-pane v-if="isSnmpDevice" :label="t('device.memory')" name="memory">
+        <el-tab-pane v-if="hasMetricsDevice" :label="t('device.memory')" name="memory">
           <div class="time-filter">
             <span class="time-filter-label">{{ t('device.timeRange') }}</span>
             <el-button-group>
@@ -374,7 +386,7 @@
           <div ref="memoryChartRef" class="chart"></div>
         </el-tab-pane>
 
-        <el-tab-pane v-if="isSnmpDevice" :label="t('device.maxTemperature')" name="temperature">
+        <el-tab-pane v-if="hasMetricsDevice" :label="t('device.maxTemperature')" name="temperature">
           <div class="time-filter">
             <span class="time-filter-label">{{ t('device.timeRange') }}</span>
             <el-button-group>
@@ -387,7 +399,7 @@
           <div ref="tempChartRef" class="chart"></div>
         </el-tab-pane>
 
-        <el-tab-pane v-if="isSnmpDevice" :label="t('device.customMetrics')" name="custom">
+        <el-tab-pane v-if="hasMetricsDevice" :label="t('device.customMetrics')" name="custom">
           <div class="custom-metric-toolbar">
             <div>
               <strong>自定义指标</strong>
@@ -1754,6 +1766,9 @@ const upCount = computed(() => interfaces.value.filter((i) => i.oper_status === 
 
 const monitorType = computed(() => device.value?.monitor_type || 'snmp')
 const isSnmpDevice = computed(() => monitorType.value === 'snmp')
+const isApiDevice = computed(() => monitorType.value === 'api')
+const isIpmiDevice = computed(() => monitorType.value === 'ipmi')
+const hasMetricsDevice = computed(() => isSnmpDevice.value || isApiDevice.value || isIpmiDevice.value)
 const isSnmpV3 = computed(
   () => isSnmpDevice.value && String(device.value?.snmp_version || '').toLowerCase() === 'v3'
 )
@@ -1770,6 +1785,8 @@ const monitorTypeText = computed(() => ({
   snmp: 'SNMP',
   ping: 'ICMP Ping',
   tcp: 'TCP 端口',
+  api: 'API 对接',
+  ipmi: 'IPMI 对接',
 }[monitorType.value] || monitorType.value))
 const probeAlive = computed(() => {
   const value = metric.value?.custom?.probe_alive
@@ -2035,7 +2052,7 @@ async function loadBase() {
   device.value = res.data
   communityVisible.value = false
   metric.value = res.data.metric
-  if ((res.data.monitor_type || 'snmp') !== 'snmp' && ['cpu', 'memory', 'temperature', 'custom', 'interfaces'].includes(activeTab.value)) {
+  if (!['snmp', 'api', 'ipmi'].includes(res.data.monitor_type || 'snmp') && ['cpu', 'memory', 'temperature', 'custom', 'interfaces'].includes(activeTab.value)) {
     activeTab.value = 'info'
   }
   await loadMaintenance()

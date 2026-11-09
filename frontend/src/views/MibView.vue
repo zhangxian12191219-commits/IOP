@@ -23,6 +23,9 @@
             <el-button size="small" @click="openOidTest()">
               <el-icon><Cpu /></el-icon>{{ t('mib.testOid') }}
             </el-button>
+            <el-button size="small" @click="vendorLibraryVisible = true">
+              <el-icon><Collection /></el-icon>厂商库
+            </el-button>
             <el-button size="small" @click="loadMibs" :loading="loading">
               <el-icon><Refresh /></el-icon>{{ t('common.refresh') }}
             </el-button>
@@ -79,12 +82,13 @@
       <div v-if="canEdit && selectedMibs.length" class="mib-batch-toolbar">
         <span class="muted">已选择 {{ selectedMibs.length }} 个 MIB</span>
         <el-button size="small" type="primary" plain @click="openBatchAssign">批量引用到资产</el-button>
+        <el-button size="small" type="primary" plain @click="openBatchClassify">批量归类</el-button>
         <el-button size="small" type="danger" plain @click="batchDeleteMibs">批量删除</el-button>
       </div>
 
       <el-table
         ref="mibTableRef"
-        :data="filteredMibs"
+        :data="pagedMibs"
         row-key="id"
         v-loading="loading"
         stripe
@@ -196,6 +200,21 @@
         </el-table-column>
       </el-table>
       <el-empty v-if="!loading && filteredMibs.length === 0" :description="t('mib.noMibHint')" />
+
+      <div class="mib-pager">
+        <span class="muted">共 {{ filteredMibs.length }} 个 MIB</span>
+        <el-pagination
+          v-model:current-page="mibPage"
+          v-model:page-size="mibPageSize"
+          :page-sizes="[10, 20, 50, 100]"
+          :total="filteredMibs.length"
+          layout="sizes, prev, pager, next"
+          background
+          small
+          @current-change="onMibPageChange"
+          @size-change="onMibPageSizeChange"
+        />
+      </div>
     </el-card>
 
     <!-- 导入 MIB 文件：必须携带厂商 + 设备型号 -->
@@ -565,6 +584,44 @@
         </el-button>
       </template>
     </el-dialog>
+
+    <el-dialog v-model="batchClassifyVisible" title="批量归类 MIB" width="600px">
+      <el-alert
+        type="info"
+        :closable="false"
+        show-icon
+        title="只填写需要修改的字段；留空表示保持原值。"
+        class="batch-classify-tip"
+      />
+      <el-form label-width="90px">
+        <el-form-item label="厂商">
+          <el-input v-model="batchClassify.vendor" placeholder="留空不修改，例如 Huawei" />
+        </el-form-item>
+        <el-form-item label="设备型号">
+          <el-input v-model="batchClassify.device_model" placeholder="留空不修改，例如 S5735" />
+        </el-form-item>
+        <el-form-item label="设备分类">
+          <el-select v-model="batchClassify.device_category" clearable placeholder="留空不修改" style="width: 100%">
+            <el-option label="交换机" value="switch" />
+            <el-option label="服务器" value="server" />
+            <el-option label="存储" value="storage" />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="备注">
+          <el-input v-model="batchClassify.note" type="textarea" :rows="2" placeholder="留空不修改" />
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="batchClassifyVisible = false">取消</el-button>
+        <el-button type="primary" :loading="batchClassifying" @click="submitBatchClassify">应用</el-button>
+      </template>
+    </el-dialog>
+
+    <VendorLibraryDialog
+      v-model="vendorLibraryVisible"
+      :can-edit="canEdit"
+      @changed="loadMibs"
+    />
   </div>
 </template>
 
@@ -577,6 +634,7 @@ import { can } from '@/store/auth'
 import { formatDateTime } from '@/utils/time'
 import { useResponsiveViewport } from '@/composables/useResponsiveViewport'
 import { VENDOR_OPTIONS } from '@/constants/device'
+import VendorLibraryDialog from '@/components/VendorLibraryDialog.vue'
 
 const { viewportWidth, isCompact } = useResponsiveViewport()
 const showMibExtras = computed(() => viewportWidth.value >= 2100)
@@ -599,6 +657,8 @@ const DEVICE_CATEGORY_LABELS = {
 }
 
 const mibs = ref([])
+const mibPage = ref(1)
+const mibPageSize = ref(20)
 const loading = ref(false)
 const uploading = ref(false)
 const canEdit = computed(() => can('mib:edit'))
@@ -610,6 +670,10 @@ const modelFilter = ref('')
 const keywordFilter = ref('')
 const selectedMibs = ref([])
 const mibTableRef = ref(null)
+const vendorLibraryVisible = ref(false)
+const batchClassifyVisible = ref(false)
+const batchClassifying = ref(false)
+const batchClassify = reactive({ vendor: '', device_model: '', device_category: '', note: '' })
 const batchBindVisible = ref(false)
 const batchMibId = ref(null)
 const batchDeviceIds = ref([])
@@ -666,6 +730,26 @@ const filteredMibs = computed(() => {
   })
 })
 
+const pagedMibs = computed(() => {
+  const start = (mibPage.value - 1) * mibPageSize.value
+  return filteredMibs.value.slice(start, start + mibPageSize.value)
+})
+
+function onMibPageChange() {
+  selectedMibs.value = []
+  mibTableRef.value?.clearSelection()
+}
+
+function onMibPageSizeChange() {
+  mibPage.value = 1
+  onMibPageChange()
+}
+
+watch([categoryFilter, vendorFilter, modelFilter, keywordFilter], () => {
+  mibPage.value = 1
+  onMibPageChange()
+})
+
 function categoryCount(key) {
   if (key === 'custom') return mibs.value.filter((m) => !m.is_builtin).length
   return mibs.value.filter((m) => m.device_category === key).length
@@ -694,6 +778,38 @@ async function batchDeleteMibs() {
     await loadMibs()
   } catch (e) {
     ElMessage.error(e.message || '批量删除 MIB 失败')
+  }
+}
+
+function openBatchClassify() {
+  if (!selectedMibs.value.length) return
+  Object.assign(batchClassify, { vendor: '', device_model: '', device_category: '', note: '' })
+  batchClassifyVisible.value = true
+}
+
+async function submitBatchClassify() {
+  if (!selectedMibs.value.length) return
+  const payload = { ids: selectedMibs.value.map((item) => item.id) }
+  if (batchClassify.vendor.trim()) payload.vendor = batchClassify.vendor.trim()
+  if (batchClassify.device_model.trim()) payload.device_model = batchClassify.device_model.trim()
+  if (batchClassify.device_category) payload.device_category = batchClassify.device_category
+  if (batchClassify.note.trim()) payload.note = batchClassify.note.trim()
+  if (Object.keys(payload).length === 1) {
+    ElMessage.warning('请至少填写一个要修改的字段')
+    return
+  }
+  batchClassifying.value = true
+  try {
+    const res = await mibApi.batchUpdate(payload)
+    ElMessage.success(res.data.message || `已更新 ${res.data.updated} 个 MIB`)
+    batchClassifyVisible.value = false
+    selectedMibs.value = []
+    mibTableRef.value?.clearSelection()
+    await loadMibs()
+  } catch (e) {
+    ElMessage.error(e.message || '批量归类 MIB 失败')
+  } finally {
+    batchClassifying.value = false
   }
 }
 
@@ -770,6 +886,8 @@ async function loadMibs() {
   try {
     const res = await mibApi.list()
     mibs.value = res.data.items
+    const maxPage = Math.max(1, Math.ceil(filteredMibs.value.length / mibPageSize.value))
+    if (mibPage.value > maxPage) mibPage.value = maxPage
   } catch (e) {
     ElMessage.error(e.message || t('mib.loadMibListFailed'))
   } finally {
@@ -1046,6 +1164,18 @@ onMounted(loadMibs)
 <style scoped>
 .mib-view {
   height: 100%;
+}
+
+.mib-pager {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 14px;
+}
+
+.batch-classify-tip {
+  margin-bottom: 14px;
 }
 
 .card-header {

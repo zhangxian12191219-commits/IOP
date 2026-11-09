@@ -807,6 +807,60 @@ def get_recommendations(mib_id: int, db: Session = Depends(get_db)):
     }
 
 
+@router.post("/batch/update")
+def batch_update_mibs(
+    request: Request,
+    payload: Dict[str, Any] = Body(...),
+    db: Session = Depends(get_db),
+):
+    """批量为 MIB 设置厂商、型号、设备分类或备注。"""
+    raw_ids = payload.get("ids")
+    if not isinstance(raw_ids, list) or not raw_ids:
+        raise HTTPException(status_code=400, detail="请选择 MIB")
+    try:
+        ids = list(dict.fromkeys(int(item) for item in raw_ids if int(item) > 0))[:500]
+    except (TypeError, ValueError):
+        raise HTTPException(status_code=400, detail="MIB ID 不合法") from None
+    if not ids:
+        raise HTTPException(status_code=400, detail="请选择 MIB")
+    updates: Dict[str, Any] = {}
+    if payload.get("vendor") is not None:
+        vendor = str(payload.get("vendor") or "").strip()
+        if len(vendor) > 60:
+            raise HTTPException(status_code=400, detail="厂商名称过长")
+        updates["vendor"] = vendor
+    if payload.get("device_model") is not None:
+        model = str(payload.get("device_model") or "").strip()
+        if len(model) > 120:
+            raise HTTPException(status_code=400, detail="设备型号过长")
+        updates["device_model"] = model
+    if payload.get("device_category") is not None:
+        category = str(payload.get("device_category") or "").strip().lower()
+        if category and category not in {"switch", "server", "storage"}:
+            raise HTTPException(status_code=400, detail="设备分类不合法")
+        updates["device_category"] = category or None
+    if payload.get("note") is not None:
+        updates["note"] = str(payload.get("note") or "").strip()[:500] or None
+    if not updates:
+        raise HTTPException(status_code=400, detail="请至少填写一个要修改的字段")
+
+    mibs = db.query(MibFile).filter(MibFile.id.in_(ids)).all()
+    if not mibs:
+        raise HTTPException(status_code=404, detail="MIB 不存在")
+    for mib in mibs:
+        for key, value in updates.items():
+            setattr(mib, key, value)
+    audit.record(
+        db, request, module="assets", action="update",
+        target_type="mib", target_name="批量修改 MIB",
+        after={"mib_ids": sorted(ids), "updates": updates},
+        message=f"批量修改 {len(mibs)} 个 MIB 的归类信息",
+    )
+    db.commit()
+    invalidate_all()
+    return {"updated": len(mibs), "message": f"已更新 {len(mibs)} 个 MIB"}
+
+
 @router.delete("/batch/delete")
 def batch_delete_mibs(
     request: Request,

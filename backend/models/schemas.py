@@ -52,6 +52,13 @@ class DeviceBase(BaseModel):
     storage_username: Optional[str] = None
     storage_password: Optional[str] = None
     storage_api_port: Optional[int] = None
+    api_auth_type: Optional[str] = "auto"
+    api_base_path: Optional[str] = None
+    api_paths: Optional[Dict[str, Any]] = None
+    ipmi_username: Optional[str] = None
+    ipmi_password: Optional[str] = None
+    ipmi_protocol: Optional[str] = "auto"
+    ipmi_port: Optional[int] = 623
 
 
 class DeviceCreate(DeviceBase):
@@ -102,6 +109,13 @@ class DeviceUpdate(BaseModel):
     storage_username: Optional[str] = None
     storage_password: Optional[str] = None
     storage_api_port: Optional[int] = None
+    api_auth_type: Optional[str] = None
+    api_base_path: Optional[str] = None
+    api_paths: Optional[Dict[str, Any]] = None
+    ipmi_username: Optional[str] = None
+    ipmi_password: Optional[str] = None
+    ipmi_protocol: Optional[str] = None
+    ipmi_port: Optional[int] = None
 
 
 class MetricOut(BaseModel):

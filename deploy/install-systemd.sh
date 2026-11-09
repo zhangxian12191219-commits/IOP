@@ -537,11 +537,20 @@ if [[ "$SRC_DIR" != "$APP_DIR" ]]; then
       --exclude deploy/snmp-nms.env \
       "$SRC_DIR"/ "$APP_DIR"/
   else
-    tar -C "$SRC_DIR" \
+    # 精简 Linux 可能没有系统 tar；离线包自带静态 busybox，可作为 tar 回退。
+    TAR_CMD=()
+    if command -v tar >/dev/null 2>&1; then
+      TAR_CMD=(tar)
+    elif [[ -x "$SRC_DIR/offline/bin/busybox" ]]; then
+      TAR_CMD=("$SRC_DIR/offline/bin/busybox" tar)
+    else
+      die "系统缺少 tar，且离线包没有 offline/bin/busybox，无法同步代码"
+    fi
+    "${TAR_CMD[@]}" -C "$SRC_DIR" \
       --exclude=node_modules --exclude=.venv --exclude=data \
       --exclude=__pycache__ --exclude="*.pyc" --exclude="*.db" \
       --exclude=deploy/snmp-nms.env \
-      -cf - . | tar -C "$APP_DIR" -xf -
+      -cf - . | "${TAR_CMD[@]}" -C "$APP_DIR" -xf -
   fi
 else
   info "已在安装目录内，跳过代码同步"
@@ -661,7 +670,7 @@ else
   info "沿用已有环境变量文件: $ENV_FILE"
 fi
 
-# 兼容历史/Windows 换行：CR 会并入 systemd EnvironmentFile 的变量值，统一去掉
+# 兼容异常 CRLF：CR 会并入 systemd EnvironmentFile 的变量值，统一去掉
 if [[ -f "$ENV_FILE" ]]; then
   sed -i 's/\r$//' "$ENV_FILE" 2>/dev/null || true
 fi

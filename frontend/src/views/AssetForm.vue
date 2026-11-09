@@ -68,7 +68,14 @@
       >
         <template #title>
           {{ testResult.reachable ? t('asset.form.connected') : t('asset.form.connectionFailed') }}
-          <span v-if="testResult.reachable && testResult.method !== 'snmp'">
+          <span v-if="testResult.reachable && testResult.method === 'api'">
+            — {{ testResult.vendor_label || testResult.vendor || 'API' }}
+            <template v-if="testResult.endpoints?.length"> · {{ testResult.endpoints.length }} 个只读端点</template>
+          </span>
+          <span v-else-if="testResult.reachable && testResult.method === 'ipmi'">
+            — {{ testResult.protocol_label || testResult.protocol || 'IPMI' }} · 电源状态 {{ testResult.power || '-' }}
+          </span>
+          <span v-else-if="testResult.reachable && testResult.method !== 'snmp'">
             — {{ testResult.target || form.ip_address }} · {{ testResult.latency_ms }}ms
           </span>
           <span v-else-if="testResult.reachable">
@@ -146,9 +153,11 @@
             <el-radio-button value="snmp">SNMP</el-radio-button>
             <el-radio-button value="ping">ICMP Ping</el-radio-button>
             <el-radio-button value="tcp">TCP 端口</el-radio-button>
+            <el-radio-button value="api">API 对接</el-radio-button>
+            <el-radio-button value="ipmi">IPMI</el-radio-button>
           </el-radio-group>
         </el-form-item>
-        <el-row v-if="form.monitor_type !== 'snmp'" :gutter="20">
+        <el-row v-if="['ping', 'tcp'].includes(form.monitor_type)" :gutter="20">
           <el-col :span="12">
             <el-form-item v-if="form.monitor_type === 'tcp'" label="TCP 端口" prop="tcp_port">
               <el-input-number v-model="form.tcp_port" :min="1" :max="65535" controls-position="right" />
@@ -157,13 +166,131 @@
           </el-col>
         </el-row>
         <el-alert
-          v-if="form.monitor_type !== 'snmp'"
+          v-if="['ping', 'tcp'].includes(form.monitor_type)"
           type="info"
           :closable="false"
           show-icon
           class="probe-mode-hint"
           :title="form.monitor_type === 'ping' ? 'Ping 接入：仅监控 ICMP 连通性和延迟，不采集 CPU/内存等 SNMP 指标。' : 'TCP 接入：仅监控指定端口连通性和连接延迟，不采集 CPU/内存等 SNMP 指标。'"
         />
+
+        <template v-if="form.monitor_type === 'api'">
+          <el-alert
+            type="warning"
+            :closable="false"
+            show-icon
+            class="api-scope-alert"
+            title="API 对接仅用于存储设备和备份一体机；服务器请选择 IPMI 对接。"
+          />
+          <el-alert
+            type="info"
+            :closable="false"
+            show-icon
+            class="api-intro-alert"
+            title="API 对接：统一通过厂商只读 REST API 采集，适用于存储、备份一体机等无法完整通过 MIB 获取硬件状态的设备。"
+          />
+          <el-row :gutter="20">
+            <el-col :span="12">
+              <el-form-item label="API 认证方式">
+                <el-select v-model="form.api_auth_type" style="width: 100%">
+                  <el-option label="自动探测（推荐）" value="auto" />
+                  <el-option label="Basic 认证" value="basic" />
+                  <el-option label="Bearer Token" value="bearer" />
+                  <el-option label="会话登录" value="session" />
+                </el-select>
+              </el-form-item>
+            </el-col>
+            <el-col :span="12">
+              <el-form-item label="API 端口">
+                <el-input-number v-model="form.storage_api_port" :min="1" :max="65535" controls-position="right" />
+                <span class="field-unit">默认 HTTPS 443</span>
+              </el-form-item>
+            </el-col>
+          </el-row>
+          <el-row :gutter="20">
+            <el-col :span="12">
+              <el-form-item label="API 用户名">
+                <el-input v-model="form.storage_username" autocomplete="off" placeholder="只读 API 账号；Bearer 模式可留空" />
+              </el-form-item>
+            </el-col>
+            <el-col :span="12">
+              <el-form-item label="API 密码 / Token">
+                <el-input
+                  v-model="form.storage_password"
+                  type="password"
+                  show-password
+                  autocomplete="new-password"
+                  :placeholder="passwordSet.storage ? '已保存，留空不修改' : '只读密码或 API Token'"
+                />
+              </el-form-item>
+            </el-col>
+          </el-row>
+          <el-row :gutter="20">
+            <el-col :span="12">
+              <el-form-item label="API 基础路径">
+                <el-input v-model="form.api_base_path" placeholder="可选，如 /api/v1；留空按厂商自动探测" />
+              </el-form-item>
+            </el-col>
+            <el-col :span="12">
+              <el-form-item label="指标路径">
+                <el-input v-model="form.api_paths.metrics" placeholder="可选，逗号分隔；留空使用厂商默认路径" />
+              </el-form-item>
+            </el-col>
+          </el-row>
+          <el-form-item label="厂商适配">
+            <div class="api-vendor-hint">
+              已内置华为、H3C、爱数、鼎甲、宏杉、北京腾凌等厂商的常见 REST 认证与只读路径；不同固件版本可在上方覆盖路径。
+            </div>
+          </el-form-item>
+        </template>
+
+        <template v-if="form.monitor_type === 'ipmi'">
+          <el-alert
+            type="info"
+            :closable="false"
+            show-icon
+            class="ipmi-intro-alert"
+            title="IPMI 对接：适用于服务器带外管理，支持 IPMI 1.5（RMCP，兼容 1.0）和 IPMI 2.0（RMCP+），通过只读 chassis/sensor 命令采集电源、温度、风扇和电压。"
+          />
+          <el-row :gutter="20">
+            <el-col :span="12">
+              <el-form-item label="IPMI 协议">
+                <el-select v-model="form.ipmi_protocol" style="width: 100%">
+                  <el-option label="自动（先 RMCP+，再 RMCP）" value="auto" />
+                  <el-option label="IPMI 2.0（RMCP+）" value="lanplus" />
+                  <el-option label="IPMI 1.5 / 1.0（RMCP）" value="lan" />
+                </el-select>
+              </el-form-item>
+            </el-col>
+            <el-col :span="12">
+              <el-form-item label="IPMI 端口">
+                <el-input-number v-model="form.ipmi_port" :min="1" :max="65535" controls-position="right" />
+                <span class="field-unit">UDP 623</span>
+              </el-form-item>
+            </el-col>
+          </el-row>
+          <el-row :gutter="20">
+            <el-col :span="12">
+              <el-form-item label="IPMI 用户名">
+                <el-input v-model="form.ipmi_username" autocomplete="off" placeholder="带外管理只读账号" />
+              </el-form-item>
+            </el-col>
+            <el-col :span="12">
+              <el-form-item label="IPMI 密码">
+                <el-input
+                  v-model="form.ipmi_password"
+                  type="password"
+                  show-password
+                  autocomplete="new-password"
+                  :placeholder="passwordSet.ipmi ? '已保存，留空不修改' : 'IPMI 只读密码'"
+                />
+              </el-form-item>
+            </el-col>
+          </el-row>
+          <div class="ipmi-hint">
+            IPMI 采集依赖主机安装 ipmitool；Linux 可执行 <code>dnf install ipmitool</code> 或 <code>apt install ipmitool</code>。密码仅用于本次只读采集，不会写入日志。
+          </div>
+        </template>
 
         <el-form-item :label="t('asset.form.deviceIcon')">
           <div class="icon-field">
@@ -427,7 +554,7 @@
 
         <el-row :gutter="20">
           <el-col :span="form.snmp_version === 'v3' ? 12 : 8">
-            <el-form-item :label="t('asset.form.snmpVersion')" prop="snmp_version" label-width="100px">
+            <el-form-item :label="t('asset.form.snmpVersion')" prop="snmp_version">
               <el-radio-group v-model="form.snmp_version">
                 <el-radio-button label="v1" />
                 <el-radio-button label="v2c" />
@@ -436,12 +563,12 @@
             </el-form-item>
           </el-col>
           <el-col :span="form.snmp_version === 'v3' ? 12 : 8">
-            <el-form-item :label="t('asset.form.snmpPort')" label-width="100px">
+            <el-form-item :label="t('asset.form.snmpPort')">
               <el-input-number v-model="form.port" :min="1" :max="65535" controls-position="right" style="width: 100%" />
             </el-form-item>
           </el-col>
           <el-col v-if="form.snmp_version !== 'v3'" :span="8">
-            <el-form-item label="团体名" prop="community" label-width="100px">
+            <el-form-item label="团体名" prop="community">
               <el-input v-model="form.community" placeholder="public" style="width: 100%" />
             </el-form-item>
           </el-col>
@@ -618,11 +745,27 @@
           </template>
         </el-alert>
 
-        <el-divider content-position="left">{{ t('asset.form.assetInfoOptional') }}</el-divider>
+        <el-divider content-position="left">
+          <span>{{ t('asset.form.assetInfoOptional') }}</span>
+          <span class="asset-info-recommend">强烈建议填写厂商和型号</span>
+        </el-divider>
 
-        <el-row :gutter="20">
+        <el-alert
+          v-if="['snmp', 'api', 'ipmi'].includes(form.monitor_type) && (!form.vendor || !form.model)"
+          type="warning"
+          :closable="false"
+          show-icon
+          class="vendor-model-alert"
+          title="厂商和型号是 MIB 智能匹配的关键字段。请尽量填写完整的厂商与实际型号，可显著提升 CPU、内存、温度、电源等指标识别准确率。"
+        />
+
+        <el-row :gutter="20" class="vendor-model-row">
           <el-col :span="12">
-            <el-form-item :label="t('asset.form.vendor')">
+            <el-form-item>
+              <template #label>
+                <span>{{ t('asset.form.vendor') }}</span>
+                <span class="recommend-inline">强烈建议</span>
+              </template>
               <div class="vendor-select-row">
                 <el-select
                   v-model="form.vendor"
@@ -633,24 +776,33 @@
                   :reserve-keyword="false"
                   :placeholder="t('asset.form.vendorSelectPlaceholder')"
                   class="vendor-select"
+                  @change="onVendorChange"
                 >
                   <el-option v-for="item in vendorOptions" :key="item" :label="item" :value="item" />
                 </el-select>
                 <el-button size="small" plain type="primary" class="vendor-add-btn" @click="addCustomVendor">
                   {{ t('asset.form.addVendor') }}
                 </el-button>
+                <el-button size="small" plain class="vendor-add-btn" @click="vendorLibraryVisible = true">
+                  厂商库
+                </el-button>
               </div>
               <div class="form-help vendor-help">{{ t('asset.form.vendorAddHint') }}</div>
             </el-form-item>
           </el-col>
           <el-col :span="12">
-            <el-form-item :label="t('asset.form.model')">
-              <el-input v-model="form.model" placeholder="S5735" />
+            <el-form-item>
+              <template #label>
+                <span>{{ t('asset.form.model') }}</span>
+                <span class="recommend-inline">强烈建议</span>
+              </template>
+              <el-input v-model="form.model" placeholder="填写完整型号，例如 S5735-L24T4S-A1" />
+              <div class="form-help model-help">型号越完整，越容易精确命中厂商 MIB 模板。</div>
             </el-form-item>
           </el-col>
         </el-row>
 
-        <template v-if="isDellStorage">
+        <template v-if="isDellStorage && form.monitor_type !== 'api'">
           <el-alert type="info" :closable="false" show-icon class="storage-api-hint"
             title="戴尔存储 SNMP 通常只提供 MIB-II，CPU、温度、风扇、电源、磁盘健康需使用只读账号通过 HTTPS API 采集。" />
           <el-row :gutter="20">
@@ -809,6 +961,8 @@
       </template>
     </el-dialog>
   </div>
+
+    <VendorLibraryDialog v-model="vendorLibraryVisible" :can-edit="true" @changed="loadVendors" />
 </template>
 
 <script setup>
@@ -816,10 +970,11 @@ import { t } from '@/i18n'
 import { ref, reactive, computed, onMounted, watch } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { assetApi, roomApi, mibApi } from '@/api'
+import { assetApi, roomApi, mibApi, vendorApi } from '@/api'
 import { DEVICE_TYPE_OPTIONS, VENDOR_OPTIONS } from '@/constants/device'
 import IconPickerDialog from '@/components/IconPickerDialog.vue'
 import IconCropper from '@/components/IconCropper.vue'
+import VendorLibraryDialog from '@/components/VendorLibraryDialog.vue'
 
 const router = useRouter()
 const route = useRoute()
@@ -841,7 +996,7 @@ const submitting = ref(false)
 const savingStay = ref(false)
 const testing = ref(false)
 const testResult = ref(null)
-const passwordSet = reactive({ auth: false, priv: false, storage: false })
+const passwordSet = reactive({ auth: false, priv: false, storage: false, ipmi: false })
 
 // 自定义图标
 const iconInputRef = ref(null)
@@ -986,6 +1141,13 @@ const form = reactive({
   storage_username: '',
   storage_password: '',
   storage_api_port: 443,
+  api_auth_type: 'auto',
+  api_base_path: '',
+  api_paths: { login: '', metrics: '' },
+  ipmi_username: '',
+  ipmi_password: '',
+  ipmi_protocol: 'auto',
+  ipmi_port: 623,
   location: '',
   vendor: '',
   model: '',
@@ -1191,6 +1353,7 @@ async function loadDevice() {
     passwordSet.auth = false
     passwordSet.priv = false
     passwordSet.storage = false
+    passwordSet.ipmi = false
     testResult.value = null
     const res = await assetApi.getOne(route.params.id)
     const d = res.data
@@ -1212,6 +1375,16 @@ async function loadDevice() {
       storage_username: d.storage_username || '',
       storage_password: '',
       storage_api_port: d.storage_api_port || 443,
+      api_auth_type: d.api_auth_type || 'auto',
+      api_base_path: d.api_base_path || '',
+      api_paths: {
+        login: d.api_paths?.login || '',
+        metrics: d.api_paths?.metrics || '',
+      },
+      ipmi_username: d.ipmi_username || '',
+      ipmi_password: '',
+      ipmi_protocol: d.ipmi_protocol || 'auto',
+      ipmi_port: d.ipmi_port || 623,
       location: d.location || '',
       vendor: d.vendor || '',
       model: d.model || '',
@@ -1254,6 +1427,7 @@ async function loadDevice() {
       passwordSet.auth = !!d.v3_auth_password_set
       passwordSet.priv = !!d.v3_priv_password_set
       passwordSet.storage = !!d.storage_password_set
+      passwordSet.ipmi = !!d.ipmi_password_set
     }
     testResult.value = null
 
@@ -1397,12 +1571,37 @@ async function loadIconPresets() {
   }
 }
 
-const customVendors = ref([])
+const vendorRows = ref([])
+const vendorLibraryVisible = ref(false)
 const vendorOptions = computed(() => {
-  const values = [...VENDOR_OPTIONS, ...customVendors.value]
+  const values = [...VENDOR_OPTIONS, ...vendorRows.value.map((item) => item.name)]
   if (form.vendor && !values.includes(form.vendor)) values.push(form.vendor)
-  return [...new Set(values)]
+  return [...new Set(values)].sort((a, b) => a.localeCompare(b, 'zh-Hans-CN'))
 })
+
+async function loadVendors() {
+  try {
+    const res = await vendorApi.options()
+    vendorRows.value = res.data.items || []
+  } catch {
+    vendorRows.value = []
+  }
+}
+
+async function ensureVendor(name, silent = false) {
+  const text = String(name || '').trim()
+  if (!text) return
+  if (vendorRows.value.some((item) => item.name === text)) return
+  try {
+    await vendorApi.create({ name: text, aliases: [], category: 'other', is_enabled: true })
+    await loadVendors()
+    if (!silent) ElMessage.success('厂商已加入厂商库')
+  } catch (e) {
+    // 已存在时刷新列表即可；其他错误不阻断资产保存。
+    if (String(e.message || '').includes('已存在')) await loadVendors()
+    if (!silent) ElMessage.warning(e.message || '厂商库同步失败，可稍后在厂商库中维护')
+  }
+}
 
 async function addCustomVendor() {
   try {
@@ -1417,13 +1616,16 @@ async function addCustomVendor() {
     )
     const name = String(value || '').trim()
     if (!name) return
-    if (!VENDOR_OPTIONS.includes(name) && !customVendors.value.includes(name)) {
-      customVendors.value.push(name)
-    }
+    await ensureVendor(name)
     form.vendor = name
   } catch {
     /* 取消 */
   }
+}
+
+async function onVendorChange(value) {
+  const name = String(value || '').trim()
+  if (name) await ensureVendor(name, true)
 }
 
 /** 按厂商自动匹配图标；silent=true 用于供应商输入后自动套用 */
@@ -1710,6 +1912,44 @@ async function testConnection() {
   testing.value = true
   testResult.value = null
   try {
+    if (form.monitor_type === 'api') {
+      const res = await assetApi.testApi({
+        host: form.ip_address,
+        vendor: form.vendor,
+        model: form.model,
+        storage_username: form.storage_username,
+        storage_password: form.storage_password || undefined,
+        storage_api_port: form.storage_api_port,
+        api_auth_type: form.api_auth_type,
+        api_base_path: form.api_base_path,
+        api_paths: form.api_paths,
+        device_id: isEdit.value ? Number(route.params.id) : undefined,
+      })
+      testResult.value = { ...res.data, method: 'api' }
+      if (res.data.reachable && res.data.auth_ok) {
+        ElMessage.success(`API 对接成功：${res.data.vendor_label || res.data.vendor || '未知厂商'}`)
+      } else {
+        ElMessage.warning(res.data.error || 'API 可达但未获取到指标，请检查认证方式或路径')
+      }
+      return
+    }
+    if (form.monitor_type === 'ipmi') {
+      const res = await assetApi.testIpmi({
+        host: form.ip_address,
+        ipmi_username: form.ipmi_username,
+        ipmi_password: form.ipmi_password || undefined,
+        ipmi_protocol: form.ipmi_protocol,
+        ipmi_port: form.ipmi_port,
+        device_id: isEdit.value ? Number(route.params.id) : undefined,
+      })
+      testResult.value = { ...res.data, method: 'ipmi' }
+      if (res.data.reachable && res.data.auth_ok) {
+        ElMessage.success(`IPMI 对接成功：${res.data.protocol_label || res.data.protocol || ''}`)
+      } else {
+        ElMessage.warning(res.data.error || 'IPMI 连接失败，请检查账号、密码或协议')
+      }
+      return
+    }
     if (form.monitor_type !== 'snmp') {
       const res = await assetApi.testProbe({
         host: form.ip_address,
@@ -1806,8 +2046,18 @@ function buildPayload() {
     group_id: form.group_id || null,
     storage_username: form.storage_username || null,
     storage_api_port: Number(form.storage_api_port || 443),
+    api_auth_type: form.api_auth_type || 'auto',
+    api_base_path: form.api_base_path || null,
+    api_paths: {
+      login: form.api_paths?.login || '',
+      metrics: form.api_paths?.metrics || '',
+    },
+    ipmi_username: form.ipmi_username || null,
+    ipmi_protocol: form.ipmi_protocol || 'auto',
+    ipmi_port: Number(form.ipmi_port || 623),
   }
   if (form.storage_password) payload.storage_password = form.storage_password
+  if (form.ipmi_password) payload.ipmi_password = form.ipmi_password
   if (form.snmp_version === 'v3') {
     Object.assign(payload, {
       v3_username: form.v3_username,
@@ -1823,8 +2073,30 @@ function buildPayload() {
   return payload
 }
 
+async function confirmVendorModelRecommended() {
+  if (!['snmp', 'api', 'ipmi'].includes(form.monitor_type)) return true
+  if (String(form.vendor || '').trim() && String(form.model || '').trim()) return true
+  try {
+    await ElMessageBox.confirm(
+      '厂商或型号尚未填写完整。MIB 智能匹配依赖这两个字段，缺失时 CPU、内存、温度、电源等指标可能识别不准确。是否仍然保存？',
+      '建议补全厂商和型号',
+      {
+        type: 'warning',
+        confirmButtonText: '仍然保存',
+        cancelButtonText: '返回填写',
+        distinguishCancelAndClose: true,
+      }
+    )
+    return true
+  } catch {
+    return false
+  }
+}
+
 async function saveCurrent() {
   if (!isEdit.value || !formRef.value) return
+  if (form.vendor) await ensureVendor(form.vendor, true)
+  if (!(await confirmVendorModelRecommended())) return
   await formRef.value.validate(async (valid) => {
     if (!valid) return
     savingStay.value = true
@@ -1843,6 +2115,8 @@ async function saveCurrent() {
 
 async function handleSubmit() {
   if (!formRef.value) return
+  if (form.vendor) await ensureVendor(form.vendor, true)
+  if (!(await confirmVendorModelRecommended())) return
   await formRef.value.validate(async (valid) => {
     if (!valid) return
     submitting.value = true
@@ -1875,6 +2149,7 @@ watch(
 )
 
 onMounted(async () => {
+  await loadVendors()
   await loadGroups()
   await loadRooms()
   await loadMibs()
@@ -1884,10 +2159,24 @@ onMounted(async () => {
 </script>
 
 <style scoped>
+.api-scope-alert { margin: 0 0 10px; }
+.api-intro-alert { margin: 0 0 14px; }
+.ipmi-intro-alert { margin: 0 0 14px; }
+.ipmi-hint { margin: -2px 0 14px; color: #6b8290; font-size: 11px; line-height: 1.7; }
+.ipmi-hint code { padding: 1px 4px; border-radius: 4px; background: #f1f6f9; color: #315f78; }
+.api-vendor-hint { color: #526b78; font-size: 12px; line-height: 1.7; }
 .storage-api-hint { margin: 4px 0 14px; }
 .storage-api-port-tip { margin-left: 10px; color: #8a9bab; font-size: 11px; }
 .asset-form :deep(.el-row) { row-gap: 2px; }
 .asset-form :deep(.el-form-item) { margin-bottom: 18px; }
+.asset-form :deep(.el-form-item__content) { min-width: 0; justify-content: flex-start; text-align: left; }
+.asset-form :deep(.el-form-item__label) { line-height: 32px; }
+.asset-form :deep(.el-input-number), .asset-form :deep(.el-select), .asset-form :deep(.el-date-editor.el-input) { width: 100%; }
+.asset-info-recommend { margin-left: 8px; padding: 2px 7px; border-radius: 9px; background: #fdf2df; color: #b66a13; font-size: 11px; font-weight: 500; }
+.vendor-model-alert { margin: 0 0 14px; }
+.vendor-model-row :deep(.el-form-item) { margin-bottom: 10px; }
+.vendor-model-row .vendor-help, .vendor-model-row .model-help { min-height: 30px; margin-top: 4px; }
+.recommend-inline { margin-left: 6px; padding: 1px 5px; border-radius: 8px; background: #fdf2df; color: #b66a13; font-size: 10px; font-weight: 400; }
 .asset-form :deep(.el-divider) { margin: 22px 0 16px; }
 .asset-form :deep(.el-divider__text) { color: #31526b; font-size: 13px; font-weight: 600; }
 .vendor-select-row { display: flex; align-items: center; gap: 8px; width: 100%; }

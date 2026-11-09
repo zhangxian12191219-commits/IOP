@@ -32,8 +32,12 @@ sudo bash deploy/install-offline.sh
 - Linux x86_64；
 - glibc 2.17 及以上（Ubuntu 20.04+、Debian 11+、RHEL/AlmaLinux 8+ 等）；
 - systemd；
-- 系统自带 `tar`、`bash`、`coreutils`、`sed`、`grep`、`awk`；
-- 不使用 Alpine/musl 系统。
+- `bash`、`coreutils`、`sed`、`grep`、`awk`；
+- 没有系统 `tar` 时使用本目录的 `bin/busybox tar`；
+- 不使用 Alpine/musl 系统；
+- 精简 openEuler 已实测通过。
+
+如需 IPMI，请把 `ipmitool` 的 RPM 放入 `os-packages/rhel/`，或从 openEuler ISO 手工安装。
 
 ## 校验
 
@@ -42,4 +46,4 @@ cd offline
 sha256sum -c SHA256SUMS
 ```
 
-> `offline/` 中的 Python 运行时和 wheels 只用于目标架构 Linux x86_64，不要复制到 Windows 或 ARM 服务器使用。
+> `offline/` 中的 Python 运行时和 wheels 只用于目标架构 Linux x86_64，不要复制到 ARM 服务器使用。

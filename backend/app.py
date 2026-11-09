@@ -35,6 +35,7 @@ from .routes import audit as audit_routes
 from .routes import system as system_routes
 from .routes import update as update_routes
 from .routes import mibs as mib_routes
+from .routes import vendors as vendor_routes
 from .routes import logs as log_routes
 from .routes import bigscreen as bigscreen_routes
 from .routes import sharing as sharing_routes
@@ -754,6 +755,7 @@ app.include_router(audit_routes.router)
 app.include_router(system_routes.router)
 app.include_router(update_routes.router)
 app.include_router(mib_routes.router)
+app.include_router(vendor_routes.router)
 app.include_router(cluster_routes.router)
 app.include_router(network_routes.router)
 app.include_router(config_backup_routes.router)

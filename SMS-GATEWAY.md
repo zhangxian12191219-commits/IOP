@@ -161,7 +161,7 @@ SMPP 不使用 MFM-920E 的 `/cgi-bin/NoticePush` 接口。
 
 | 字段 | 说明 |
 |---|---|
-| 串口设备 | Linux：`/dev/ttyUSB0`；Windows：`COM3` |
+| 串口设备 | Linux：`/dev/ttyUSB0` |
 | 波特率 | 按模块要求，常见 115200 |
 | 服务器依赖 | `pyserial` |
 

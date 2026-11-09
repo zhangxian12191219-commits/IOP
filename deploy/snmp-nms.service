@@ -10,7 +10,8 @@ StartLimitIntervalSec=0
 Type=notify
 NotifyAccess=main
 WatchdogSec=60
-TimeoutStartSec=60
+# 数据库迁移/MIB 初始化在大型环境中可能超过 60 秒
+TimeoutStartSec=300
 # 主机网络/服务/防火墙/计划任务管理需要 root；只读部署可改为 snmp
 User=root
 Group=root

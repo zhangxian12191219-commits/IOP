@@ -16,14 +16,14 @@ case "$TARGET" in
     command -v apt-get >/dev/null || { echo "需要 apt-get" >&2; exit 1; }
     OUT="$ROOT/offline/os-packages/debian"; mkdir -p "$OUT"
     apt-get update
-    apt-get install -y --download-only postgresql postgresql-client redis-server
+    apt-get install -y --download-only postgresql postgresql-client redis-server ipmitool
     find /var/cache/apt/archives -maxdepth 1 -name '*.deb' -exec cp -f {} "$OUT"/ \;
     ;;
   rhel)
     command -v dnf >/dev/null || { echo "需要 dnf" >&2; exit 1; }
     OUT="$ROOT/offline/os-packages/rhel"; mkdir -p "$OUT"
     dnf install -y 'dnf-command(download)' || true
-    dnf download --resolve --destdir "$OUT" postgresql-server postgresql redis
+    dnf download --resolve --destdir "$OUT" postgresql-server postgresql redis ipmitool
     ;;
   *) echo "未知目标: $TARGET" >&2; exit 1 ;;
 esac

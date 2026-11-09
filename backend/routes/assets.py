@@ -38,7 +38,7 @@ EXCEL_TYPE = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 CUSTOM_METRIC_KEYS = ("cpu", "memory", "temperature", "power")
 OID_PATTERN = re.compile(r"^\d+(\.\d+){2,}$")
 CUSTOM_METRIC_KEY_PATTERN = re.compile(r"^[a-z][a-z0-9_]{0,29}$")
-MONITOR_TYPES = {"snmp", "ping", "tcp"}
+MONITOR_TYPES = {"snmp", "ping", "tcp", "api", "ipmi"}
 
 
 class ProbeTestRequest(BaseModel):
@@ -46,6 +46,29 @@ class ProbeTestRequest(BaseModel):
     monitor_type: str = "ping"
     tcp_port: int = 80
     timeout: int = 5
+
+
+class ApiTestRequest(BaseModel):
+    host: str
+    vendor: Optional[str] = None
+    model: Optional[str] = None
+    storage_username: Optional[str] = None
+    storage_password: Optional[str] = None
+    storage_api_port: int = 443
+    api_auth_type: str = "auto"
+    api_base_path: Optional[str] = None
+    api_paths: Optional[Dict[str, Any]] = None
+    device_id: Optional[int] = None
+    timeout: int = 12
+
+
+class IpmiTestRequest(BaseModel):
+    host: str
+    ipmi_username: Optional[str] = None
+    ipmi_password: Optional[str] = None
+    ipmi_protocol: str = "auto"
+    ipmi_port: int = 623
+    device_id: Optional[int] = None
 
 
 class AssetGroupCreate(BaseModel):
@@ -59,7 +82,7 @@ def _validate_monitor_config(data: dict) -> None:
     if "monitor_type" in data:
         method = str(data.get("monitor_type") or "snmp").strip().lower()
         if method not in MONITOR_TYPES:
-            raise HTTPException(status_code=400, detail="接入方式必须是 snmp、ping 或 tcp")
+            raise HTTPException(status_code=400, detail="接入方式必须是 snmp、ping、tcp、api 或 ipmi")
         data["monitor_type"] = method
     method = data.get("monitor_type")
     if method == "tcp" or "tcp_port" in data:
@@ -722,6 +745,64 @@ def list_asset_groups(db: Session = Depends(get_db)):
     }
 
 
+@router.post("/test-ipmi")
+async def test_ipmi(payload: IpmiTestRequest, request: Request, db: Session = Depends(get_db)):
+    """测试 IPMI 1.5/2.0（RMCP/RMCP+）只读连通性。"""
+    from types import SimpleNamespace
+    from ..services.ipmi_collector import probe_ipmi
+
+    if not (payload.host or "").strip():
+        raise HTTPException(status_code=400, detail="请输入 IPMI IP 或主机名")
+    saved = None
+    if payload.device_id:
+        saved = db.query(Device).filter(Device.id == payload.device_id).first()
+        if saved:
+            asset_scope.require_device_access(db, request, saved)
+    supplied_password = str(payload.ipmi_password or "").strip()
+    password_enc = encrypt_password(supplied_password) if supplied_password else (saved.ipmi_password_enc if saved else "")
+    device = SimpleNamespace(
+        ip_address=payload.host.strip(),
+        ipmi_username=payload.ipmi_username or (saved.ipmi_username if saved else "") or "",
+        ipmi_password_enc=password_enc,
+        ipmi_protocol=payload.ipmi_protocol or (saved.ipmi_protocol if saved else "auto"),
+        ipmi_port=int(payload.ipmi_port or 623),
+    )
+    return probe_ipmi(device)
+
+
+@router.post("/test-api")
+async def test_api(payload: ApiTestRequest, request: Request, db: Session = Depends(get_db)):
+    """测试统一 API 接入：仅执行只读登录/查询，不修改厂商设备。"""
+    from types import SimpleNamespace
+    from ..services.api_collector import probe_api
+
+    if not (payload.host or "").strip():
+        raise HTTPException(status_code=400, detail="请输入 IP 或主机名")
+    saved = None
+    if payload.device_id:
+        saved = db.query(Device).filter(Device.id == payload.device_id).first()
+        if saved:
+            asset_scope.require_device_access(db, request, saved)
+    supplied_password = str(payload.storage_password or "").strip()
+    if supplied_password:
+        password_enc = encrypt_password(supplied_password)
+    else:
+        password_enc = saved.storage_password_enc if saved else ""
+    device = SimpleNamespace(
+        ip_address=payload.host.strip(),
+        vendor=payload.vendor or (saved.vendor if saved else "") or "",
+        model=payload.model or (saved.model if saved else "") or "",
+        device_type="storage",
+        storage_username=payload.storage_username or (saved.storage_username if saved else "") or "",
+        storage_password_enc=password_enc,
+        storage_api_port=int(payload.storage_api_port or 443),
+        api_auth_type=payload.api_auth_type or (saved.api_auth_type if saved else "auto"),
+        api_base_path=payload.api_base_path or (saved.api_base_path if saved else "") or "",
+        api_paths=payload.api_paths or (saved.api_paths if saved else {}) or {},
+    )
+    return probe_api(device)
+
+
 @router.get("/{device_id}")
 def get_device(device_id: int, request: Request, db: Session = Depends(get_db)):
     """获取设备详情（按群组校验）"""
@@ -782,6 +863,11 @@ def create_device(payload: DeviceCreate, request: Request, db: Session = Depends
         data["storage_password_enc"] = encrypt_password(storage_password)
     else:
         data.pop("storage_password_enc", None)
+    ipmi_password = str(data.pop("ipmi_password", None) or "").strip()
+    if ipmi_password:
+        data["ipmi_password_enc"] = encrypt_password(ipmi_password)
+    else:
+        data.pop("ipmi_password_enc", None)
     _validate_monitor_config(data)
     _validate_custom_config(db, data)
 
@@ -852,6 +938,9 @@ def update_device(
     storage_password = str(data.pop("storage_password", None) or "").strip()
     if storage_password:
         data["storage_password_enc"] = encrypt_password(storage_password)
+    ipmi_password = str(data.pop("ipmi_password", None) or "").strip()
+    if ipmi_password:
+        data["ipmi_password_enc"] = encrypt_password(ipmi_password)
     _validate_monitor_config(data)
     if "group_id" in data:
         group_id = data.get("group_id")
@@ -1219,6 +1308,13 @@ def device_to_dict(db: Session, device: Device) -> dict:
         "storage_username": device.storage_username,
         "storage_password_set": bool(device.storage_password_enc),
         "storage_api_port": device.storage_api_port or 443,
+        "api_auth_type": device.api_auth_type or "auto",
+        "api_base_path": device.api_base_path or "",
+        "api_paths": device.api_paths or {},
+        "ipmi_username": device.ipmi_username,
+        "ipmi_password_set": bool(device.ipmi_password_enc),
+        "ipmi_protocol": device.ipmi_protocol or "auto",
+        "ipmi_port": device.ipmi_port or 623,
         "location": device.location,
         "vendor": device.vendor,
         "model": device.model,

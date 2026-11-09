@@ -24,6 +24,8 @@ from ..notify import notify_alert
 from ..services import alert_rules
 from ..services import alert_rules as alert_rule_service
 from ..services.storage_api import collect_dell_storage, is_dell_storage
+from ..services.api_collector import collect_api_device, probe_api
+from ..services.ipmi_collector import collect_ipmi_device, probe_ipmi
 from ..services import alert_suppression
 from ..services.alert_recovery import build_recovery_payload
 from ..services.cache import invalidate_dashboard
@@ -64,6 +66,10 @@ class DataCollector:
         method = (getattr(device, "monitor_type", None) or "snmp").lower()
         if method in ("ping", "tcp"):
             return await self._collect_probe(device, method)
+        if method == "api":
+            return await self._collect_api_device(device)
+        if method == "ipmi":
+            return await self._collect_ipmi_device(device)
 
         # 戴尔 ME5/PowerVault 采用 API-only：优先采集 API，不再依赖 SNMP/MIB。
         if is_dell_storage(device) and device.storage_username and device.storage_password_enc:
@@ -214,6 +220,113 @@ class DataCollector:
 
         return metrics
 
+    async def _collect_ipmi_device(self, device: Device) -> Optional[Dict[str, Any]]:
+        """IPMI 1.5/2.0 服务器采集：只读 chassis/sensor 命令。"""
+        try:
+            result = await asyncio.to_thread(collect_ipmi_device, device)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("IPMI 采集失败 %s: %s", device.ip_address, exc)
+            self._save_metrics(device, {
+                "cpu_usage": None, "memory_usage": None, "memory_total": None, "memory_used": None,
+                "disk_usage": None, "disk_total": None, "disk_used": None,
+                "temperature": None, "power_status": None, "uptime": None,
+                "custom": {"ipmi_error": str(exc)[:500], "ipmi_mode": "ipmi-only"},
+            })
+            self._mark_offline(device)
+            return None
+        custom = dict(result.get("custom") or {})
+        custom["ipmi_mode"] = "ipmi-only"
+        custom["mib_disabled"] = True
+        metrics = {
+            "cpu_usage": None,
+            "memory_usage": None,
+            "memory_total": None,
+            "memory_used": None,
+            "disk_usage": None,
+            "disk_total": None,
+            "disk_used": None,
+            "temperature": result.get("temperature"),
+            "power_status": result.get("power_status"),
+            "uptime": None,
+            "custom": custom,
+        }
+        self._recover_offline_alerts(device)
+        self._save_metrics(device, metrics)
+        self._check_alerts(device, metrics)
+        if device.mib_id or device.custom_oids or device.custom_metrics or device.server_sensors:
+            device.mib_id = None
+            device.custom_oids = {}
+            device.custom_metrics = []
+            device.server_sensors = []
+            try:
+                self.db.commit()
+            except Exception as exc:  # noqa: BLE001
+                self.db.rollback()
+                logger.warning("解除 IPMI 设备 MIB 绑定失败 %s: %s", device.ip_address, exc)
+        return metrics
+
+    async def _collect_api_device(self, device: Device) -> Optional[Dict[str, Any]]:
+        """统一 API 接入：厂商 REST 适配器只执行只读登录/查询。"""
+        try:
+            result = await asyncio.to_thread(collect_api_device, device)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("API 采集失败 %s: %s", device.ip_address, exc)
+            self._save_metrics(device, {
+                "cpu_usage": None, "memory_usage": None, "memory_total": None, "memory_used": None,
+                "disk_usage": None, "disk_total": None, "disk_used": None,
+                "temperature": None, "power_status": None, "uptime": None,
+                "custom": {
+                    "api_error": str(exc)[:500],
+                    "api_mode": "api-only",
+                    "api_vendor": getattr(device, "vendor", None),
+                },
+            })
+            self._mark_offline(device)
+            return None
+        components = result.get("components") or {}
+        summary = components.get("summary") if isinstance(components, dict) else {}
+        summary = summary or {}
+        custom = dict(result.get("custom") or {})
+        custom["api_mode"] = "api-only"
+        custom["mib_disabled"] = True
+        custom.setdefault("server_components", components)
+        metrics = {
+            "cpu_usage": result.get("cpu_usage"),
+            "memory_usage": result.get("memory_usage"),
+            "memory_total": result.get("memory_total") or (
+                round(float(summary.get("memory_total_gb") or 0) * 1024, 2) or None
+            ),
+            "memory_used": result.get("memory_used"),
+            "disk_usage": result.get("disk_usage"),
+            "disk_total": result.get("disk_total"),
+            "disk_used": result.get("disk_used"),
+            "temperature": result.get("temperature"),
+            "power_status": result.get("power_status"),
+            "uptime": result.get("uptime"),
+            "custom": custom,
+        }
+        self._recover_offline_alerts(device)
+        self._save_metrics(device, metrics)
+        self._check_alerts(device, metrics)
+        self._check_storage_disk_alerts(device, metrics)
+        if result.get("interfaces"):
+            try:
+                self._save_interfaces(device, result["interfaces"])
+                self._record_interface_history(device)
+            except Exception as exc:  # noqa: BLE001
+                logger.debug("保存 API 设备接口失败 %s: %s", device.ip_address, exc)
+        if device.mib_id or device.custom_oids or device.custom_metrics or device.server_sensors:
+            device.mib_id = None
+            device.custom_oids = {}
+            device.custom_metrics = []
+            device.server_sensors = []
+            try:
+                self.db.commit()
+            except Exception as exc:  # noqa: BLE001
+                self.db.rollback()
+                logger.warning("解除 API 设备 MIB 绑定失败 %s: %s", device.ip_address, exc)
+        return metrics
+
     async def _collect_dell_storage_api(self, device: Device) -> Optional[Dict[str, Any]]:
         """戴尔 ME5 存储 API-only 采集：不读取 MIB、不执行自定义 OID。"""
         try:
@@ -338,6 +451,24 @@ class DataCollector:
                 "method": method,
                 "latency_ms": round(float(result.get("avg_latency") or result.get("response_time") or 0), 2),
                 "error": result.get("error_message") or "",
+            }
+        if method == "api":
+            result = await asyncio.to_thread(probe_api, device)
+            return {
+                "alive": bool(result.get("reachable") and result.get("auth_ok")),
+                "method": "api",
+                "latency_ms": 0,
+                "error": result.get("error") or "",
+                "vendor": result.get("vendor"),
+            }
+        if method == "ipmi":
+            result = await asyncio.to_thread(probe_ipmi, device)
+            return {
+                "alive": bool(result.get("reachable") and result.get("auth_ok")),
+                "method": "ipmi",
+                "latency_ms": 0,
+                "error": result.get("error") or "",
+                "protocol": result.get("protocol"),
             }
         client = SNMPClient.from_device(
             device,

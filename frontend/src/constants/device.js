@@ -40,6 +40,7 @@ export const VENDOR_OPTIONS = [
   'Sangfor', 'Topsec', 'Juniper', 'Arista', 'TP-Link', 'MikroTik', 'Ubiquiti', 'F5', 'A10',
   'Hikvision', 'Dahua', 'ZTE', 'Maipu', 'Dell', 'HP', 'Lenovo', 'Inspur',
   'IBM', 'VMware', 'Microsoft', 'Apple', 'Samsung', 'Netgear', 'D-Link',
+  'AISHU', 'Dingjia', 'MacroSAN', 'Tengling',
 ]
 
 /** 资产表单/筛选可选的类型（也允许用户输入自定义类型） */
