@@ -454,22 +454,26 @@ onMounted(async () => {
 }
 
 .identity-meta div {
-  display: flex;
-  justify-content: space-between;
-  gap: 10px;
+  display: grid;
+  grid-template-columns: 76px minmax(0, 1fr);
+  align-items: start;
+  gap: 8px;
   font-size: 11px;
+  line-height: 1.55;
 }
 
 .identity-meta span {
   color: #8c9aa7;
-  flex-shrink: 0;
+  text-align: left;
+  white-space: nowrap;
 }
 
 .identity-meta b {
   color: #314252;
   font-weight: 500;
-  text-align: right;
-  word-break: break-all;
+  text-align: left;
+  word-break: break-word;
+  overflow-wrap: anywhere;
 }
 
 .account-panel {

@@ -4,7 +4,7 @@
 
 面向网络设备、安全设备、服务器、网站和虚拟化/容器环境的统一监控运维平台，覆盖资产管理、SNMP 采集、网络拓扑、3D 大屏、告警、巡检、配置备份、机房、MIB、AI 运维、级联和系统管理。
 
-- 当前版本：**v2.22.37**
+- 当前版本：**v2.22.43**
 - 授权签发平台：**License Studio v2.10.1**
 - 后端：Python 3.12 / FastAPI / SQLAlchemy
 - 前端：Vue 3 / Vite / Element Plus / ECharts / AntV X6
@@ -214,6 +214,31 @@ API 对接仅用于存储设备和备份一体机。服务器请选择 IPMI 对�
 
 ## 3. 当前版本改进
 
+### v2.22.43
+
+- 每次发起/接听语音视频通话前强制刷新 ICE/TURN 配置，避免页面缓存旧的 `lan-direct` 配置；
+- TURN 脚本补充 `relay-ip`，修复多网卡服务器 relay 地址不正确；
+- 环境 2 的 coturn 配置改为实际读取的 `/etc/coturn/turnserver.conf`。
+
+### v2.22.40
+
+- TURN bundle 改为内容根目录，修正精简系统解压路径；
+- setup-turn 自动绑定 TURN_HOST 的 `listening-ip`，适配多网卡服务器；
+- 环境 1/2 已完成 TURN 在线验证，环境 3 使用离线 bundle 验证。
+
+### v2.22.39
+
+- 发布包增加独立 coturn bundle 和 `deploy/setup-turn.sh`；
+- 支持将平台服务器配置为音视频 TURN 中转节点；
+- 自动生成 TURN 凭据、写入平台 WebRTC 配置并重启服务。
+
+### v2.22.38
+
+- 个人账户的所属角色、所属群组、最后登录改为固定标签列左对齐；
+- 大屏路由守卫先消费新页签 handoff，避免打开大屏时被提前跳转登录；
+- AI 大屏入口补充 token handoff；
+- handoff 有效期从 60 秒延长到 5 分钟，兼容较慢的浏览器/展示终端。
+
 ### v2.22.37
 
 - 在线安装与离线安装合并到单一 README；
@@ -400,7 +425,7 @@ flowchart LR
 ### 5.1 Docker Compose
 
 ```bash
-cd IOP-v2.22.37
+cd IOP-v2.22.43
 cp .env.example .env
 ```
 
@@ -435,7 +460,7 @@ https://<服务器IP>/
 ### 5.2 Linux systemd
 
 ```bash
-cd IOP-v2.22.37
+cd IOP-v2.22.43
 sudo bash deploy/install-systemd.sh
 sudo systemctl status snmp-nms
 ```
@@ -455,8 +480,8 @@ sudo bash deploy/install-systemd.sh --with-postgres --with-redis
 离线环境使用：
 
 ```bash
-unzip IOP-v2.22.37.zip -d /tmp
-cd /tmp/IOP-v2.22.37
+unzip IOP-v2.22.43.zip -d /tmp
+cd /tmp/IOP-v2.22.43
 sudo bash deploy/apply-permissions.sh
 sudo bash deploy/install-offline.sh
 ```
@@ -492,12 +517,13 @@ sudo cat /opt/snmp-monitor/data/initial_admin_password.txt
 - 静态 busybox；
 - 后端全部 Python wheels；
 - 已构建前端 `frontend/dist`；
-- systemd 安装脚本和依赖校验文件。
+- systemd 安装脚本和依赖校验文件；
+- coturn 独立二进制 bundle 与 `deploy/setup-turn.sh`。
 
 安装前可校验：
 
 ```bash
-cd /tmp/IOP-v2.22.37/offline
+cd /tmp/IOP-v2.22.43/offline
 sha256sum -c SHA256SUMS
 ```
 
@@ -515,13 +541,74 @@ sha256sum -c SHA256SUMS
 ### 5.4 源码运行
 
 ```bash
-cd IOP-v2.22.37
+cd IOP-v2.22.43
 ./start.sh --build
 ```
 
 默认后端监听 `127.0.0.1:8000`，生产环境应通过内置 Web 网关或反向代理提供 HTTPS。
 
-### 5.5 卸载
+### 5.5 音视频 TURN 中转
+
+平台自带独立 coturn bundle，可把平台服务器同时作为 TURN 中转节点：
+
+```bash
+sudo bash deploy/setup-turn.sh --host <客户端可访问的服务器IP>
+```
+
+例如：
+
+```bash
+sudo bash deploy/setup-turn.sh --host <TURN_HOST>
+```
+
+脚本会：
+
+- 解压 `offline/coturn-linux-x86_64.tar.gz` 到 `/opt/coturn`；
+- 生成 `/etc/turnserver.conf` 和 `coturn.service`；
+- 生成 TURN 用户名 `nms` 和随机密码；
+- 写入 `/opt/snmp-monitor/deploy/snmp-nms.env` 的 `WEBRTC_*` 配置；
+- 重启 `coturn` 和 `snmp-nms`；
+- firewalld 开启时自动放行 TURN 端口。
+
+需要放行的端口：
+
+```text
+3478/TCP
+3478/UDP
+49160-49200/UDP
+```
+
+如果只允许通过强制中转验证，可加：
+
+```bash
+sudo bash deploy/setup-turn.sh --host <IP> --force-relay
+```
+
+验证接口应返回：
+
+```json
+{
+  "mode": "lan-turn",
+  "turn_configured": true
+}
+```
+
+TURN 凭据保存在：
+
+```text
+/opt/snmp-monitor/deploy/snmp-nms.env
+```
+
+字段：
+
+```text
+WEBRTC_TURN_USERNAME
+WEBRTC_TURN_CREDENTIAL
+```
+
+注意：TURN 必须使用客户端可访问的 IP；如果服务器位于 NAT 后，需要做 3478/TCP、3478/UDP 和 relay UDP 端口映射。
+
+### 5.6 卸载
 
 先备份 data（尤其 SQLite、授权文件、上传文件和日志）：
 
@@ -828,7 +915,7 @@ cd frontend && npm run build
 ## 12. 目录结构
 
 ```text
-IOP-v2.22.37/
+IOP-v2.22.43/
 ├── backend/                  FastAPI 后端
 ├── frontend/                 Vue 3 前端和构建产物
 ├── deploy/                   systemd、离线安装、Web 网关脚本
@@ -905,7 +992,7 @@ MPL-2.0 允许使用、修改和分发本项目，修改后的 MPL 覆盖文件�
 
 ## 15. 版本
 
-当前版本：**v2.22.37**
+当前版本：**v2.22.43**
 
 ```text
 后端：Python 3.12 / FastAPI

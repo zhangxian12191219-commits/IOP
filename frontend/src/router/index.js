@@ -1,4 +1,5 @@
 import { createRouter, createWebHistory } from 'vue-router'
+import { consumeHandoff } from '@/store/auth'
 
 const routes = [
   {
@@ -269,6 +270,8 @@ const router = createRouter({
 
 /** 前端路由守卫：未登录跳登录页；无权限跳首页 */
 router.beforeEach((to) => {
+  // 大屏/新页签 handoff 必须先消费，再判断登录态；否则会先跳 /login。
+  consumeHandoff()
   const token = localStorage.getItem('nms_token') || sessionStorage.getItem('nms_token')
 
   if (to.meta?.public) {

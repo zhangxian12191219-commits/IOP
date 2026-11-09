@@ -10,7 +10,7 @@ const TOKEN_KEY = 'nms_token'
 const USER_KEY = 'nms_user'
 const REMEMBER_KEY = 'nms_remember'
 const HANDOFF_KEY = 'nms_token_handoff'
-const HANDOFF_TTL = 60 * 1000
+const HANDOFF_TTL = 5 * 60 * 1000
 
 const state = reactive({
   token: readToken(),
@@ -36,7 +36,7 @@ export function handoffToken(token) {
   }
 }
 
-function consumeHandoff() {
+export function consumeHandoff() {
   try {
     const raw = localStorage.getItem(HANDOFF_KEY)
     if (!raw) return

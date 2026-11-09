@@ -154,7 +154,8 @@ let pendingIce = []
 let rtcConfig = { iceServers: [], iceTransportPolicy: 'all', iceCandidatePoolSize: 2 }
 let rtcConfigPromise = null
 
-async function ensureRtcConfig() {
+async function ensureRtcConfig(force = false) {
+  if (force) rtcConfigPromise = null
   if (rtcConfigPromise) return rtcConfigPromise
   rtcConfigPromise = imApi.webrtcConfig()
     .then((res) => {
@@ -450,9 +451,7 @@ function handleSocketMessage(payload) {
       .then(async () => {
         await flushPendingIce()
         if (payload.call_type === 'audio' && imState.call.type === 'video') {
-          imState.call.type = 'audio'
-          imState.call.cameraOn = false
-          ElMessage.warning('对方摄像头不可用，已切换为语音通话')
+          ElMessage.warning('对方未开启摄像头，视频通话将没有对方画面')
         }
         imState.call.status = 'active'
         imState.call.startedAt = Date.now()
@@ -751,7 +750,7 @@ function handleGroupCallInvite(payload) {
 }
 
 export async function startGroupCall(group, type = 'audio') {
-  await ensureRtcConfig()
+  await ensureRtcConfig(true)
   const groupId = Number(group?.id)
   if (!groupId) return false
   if (!imState.connected) {
@@ -791,18 +790,19 @@ export async function startGroupCall(group, type = 'audio') {
   }
   try {
     localStream.value = await getMedia(callType)
-    const actualType = effectiveCallType(localStream.value, callType)
-    if (actualType !== callType) {
-      imState.groupCall.type = 'audio'
-      imState.groupCall.cameraOn = false
-      imState.groupCall.participants = (imState.groupCall.participants || []).map((item) => ({ ...item, camera: false }))
-      ElMessage.warning(localStream.value.__videoError || '摄像头不可用，已切换为群语音通话')
+    imState.groupCall.cameraOn = callType === 'video' && (localStream.value?.getVideoTracks?.().length || 0) > 0
+    imState.groupCall.participants = (imState.groupCall.participants || []).map((item) => ({
+      ...item,
+      camera: item.id === meId.value ? imState.groupCall.cameraOn : (callType === 'video'),
+    }))
+    if (callType === 'video' && !imState.groupCall.cameraOn) {
+      ElMessage.warning(localStream.value.__videoError || '摄像头不可用，群视频通话将没有本端画面')
     }
     const sent = sendSocket({
       type: 'group-call-start',
       group_id: groupId,
       call_id: imState.groupCall.callId,
-      call_type: actualType,
+      call_type: callType,
     })
     if (!sent) throw new Error('通信连接已断开')
     return true
@@ -814,7 +814,7 @@ export async function startGroupCall(group, type = 'audio') {
 }
 
 export async function acceptGroupIncoming() {
-  await ensureRtcConfig()
+  await ensureRtcConfig(true)
   const incoming = imState.groupIncoming
   if (!incoming) return
   const type = incoming.call_type === 'video' ? 'video' : 'audio'
@@ -837,11 +837,13 @@ export async function acceptGroupIncoming() {
   }
   try {
     localStream.value = await getMedia(type)
-    if (effectiveCallType(localStream.value, type) !== type) {
-      imState.groupCall.type = 'audio'
-      imState.groupCall.cameraOn = false
-      imState.groupCall.participants = (imState.groupCall.participants || []).map((item) => ({ ...item, camera: false }))
-      ElMessage.warning(localStream.value.__videoError || '摄像头不可用，已切换为群语音通话')
+    imState.groupCall.cameraOn = type === 'video' && (localStream.value?.getVideoTracks?.().length || 0) > 0
+    imState.groupCall.participants = (imState.groupCall.participants || []).map((item) => ({
+      ...item,
+      camera: item.id === meId.value ? imState.groupCall.cameraOn : (type === 'video'),
+    }))
+    if (type === 'video' && !imState.groupCall.cameraOn) {
+      ElMessage.warning(localStream.value.__videoError || '摄像头不可用，群视频通话将没有本端画面')
     }
     const sent = sendSocket({
       type: 'group-call-join',
@@ -1425,15 +1427,15 @@ function mediaErrorMessage(error, type) {
       : '麦克风权限被拒绝，请点击地址栏左侧站点图标，允许麦克风后重试'
   }
   if (name === 'NotFoundError' || name === 'DevicesNotFoundError') {
-    return type === 'video' ? '未检测到摄像头，已切换为语音通话' : '未检测到麦克风设备'
+    return type === 'video' ? '未检测到摄像头，视频通话将没有本端画面' : '未检测到麦克风设备'
   }
   if (name === 'NotReadableError' || name === 'TrackStartError') {
     return type === 'video'
-      ? '摄像头正被其他程序占用，已切换为语音通话'
+      ? '摄像头正被其他程序占用，视频通话将没有本端画面'
       : '麦克风正被其他程序占用'
   }
   if (name === 'OverconstrainedError' || name === 'ConstraintNotSatisfiedError') {
-    return type === 'video' ? '摄像头不支持请求的分辨率，已切换为语音通话' : '麦克风参数不受支持'
+    return type === 'video' ? '摄像头不支持请求的分辨率，视频通话将没有本端画面' : '麦克风参数不受支持'
   }
   return error?.message || '无法获取麦克风/摄像头，请检查设备与权限'
 }
@@ -1546,7 +1548,7 @@ function resetCallState() {
 }
 
 export async function startCall(peer, type = 'audio') {
-  await ensureRtcConfig()
+  await ensureRtcConfig(true)
   const peerId = Number(peer?.id || peer)
   const target = imState.users.find((user) => user.id === peerId)
   if (!target) {
@@ -1575,11 +1577,9 @@ export async function startCall(peer, type = 'audio') {
   imState.call.minimized = false
   try {
     localStream.value = await getMedia(type)
-    const callType = effectiveCallType(localStream.value, type)
-    if (callType !== type) {
-      imState.call.type = 'audio'
-      imState.call.cameraOn = false
-      ElMessage.warning(localStream.value.__videoError || '摄像头不可用，已切换为语音通话')
+    imState.call.cameraOn = type === 'video' && (localStream.value?.getVideoTracks?.().length || 0) > 0
+    if (type === 'video' && !imState.call.cameraOn) {
+      ElMessage.warning(localStream.value.__videoError || '摄像头不可用，视频通话将没有本端画面')
     }
     const pc = createPeerConnection(peerId)
     const offer = await pc.createOffer()
@@ -1588,7 +1588,7 @@ export async function startCall(peer, type = 'audio') {
       type: 'call-offer',
       to: peerId,
       call_id: imState.call.callId,
-      call_type: callType,
+      call_type: type,
       sdp: pc.localDescription,
     })
     if (!sent) throw new Error('通信连接已断开')
@@ -1608,7 +1608,7 @@ export async function startCall(peer, type = 'audio') {
 }
 
 export async function acceptIncoming() {
-  await ensureRtcConfig()
+  await ensureRtcConfig(true)
   const incoming = imState.incoming
   if (!incoming) return
   stopCallRingtone()
@@ -1626,10 +1626,9 @@ export async function acceptIncoming() {
   imState.call.startedAt = Date.now()
   try {
     localStream.value = await getMedia(type)
-    if (effectiveCallType(localStream.value, type) !== type) {
-      imState.call.type = 'audio'
-      imState.call.cameraOn = false
-      ElMessage.warning(localStream.value.__videoError || '摄像头不可用，已切换为语音通话')
+    imState.call.cameraOn = type === 'video' && (localStream.value?.getVideoTracks?.().length || 0) > 0
+    if (type === 'video' && !imState.call.cameraOn) {
+      ElMessage.warning(localStream.value.__videoError || '摄像头不可用，视频通话将没有本端画面')
     }
     const pc = createPeerConnection(imState.call.peerId)
     await pc.setRemoteDescription(new RTCSessionDescription(incoming.sdp))

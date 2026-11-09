@@ -2,7 +2,7 @@
 
 An operations and monitoring platform for network devices, security devices, infrastructure, websites, and virtualized environments. It provides asset management, SNMP collection, topology, dashboards, alerts, inspections, data-center visualization, website/certificate monitoring, AI operations, cascade management, and system administration.
 
-- Product version: **v2.22.37**
+- Product version: **v2.22.43**
 - License Studio: **v2.10.1**
 - Backend: Python 3.10+ / FastAPI / SQLAlchemy
 - Frontend: Vue 3 / Vite / Element Plus / ECharts / AntV X6
@@ -105,8 +105,8 @@ sudo dnf install -y python3 python3-pip tar curl unzip
 The release bundle includes a standalone Linux x86_64 Python 3.12 runtime compressed with xz, a static busybox extractor, all required Python wheels, and the built frontend. No Internet, system Python, pip, or apt/dnf package download is required.
 
 ```bash
-unzip IOP-v2.22.37.zip -d /tmp
-cd /tmp/IOP-v2.22.37
+unzip IOP-v2.22.43.zip -d /tmp
+cd /tmp/IOP-v2.22.43
 sudo bash deploy/apply-permissions.sh
 sudo bash deploy/install-offline.sh
 ```
@@ -116,8 +116,8 @@ Requirements: Linux x86_64, glibc 2.17+, systemd, bash/coreutils/sed/grep/awk. I
 ### Install
 
 ```bash
-unzip IOP-v2.22.37.zip -d /tmp
-cd /tmp/IOP-v2.22.37
+unzip IOP-v2.22.43.zip -d /tmp
+cd /tmp/IOP-v2.22.43
 
 # Fix executable bits if the extraction tool dropped them
 bash deploy/apply-permissions.sh
@@ -286,6 +286,16 @@ sudo systemctl start snmp-nms
 
 Restore: stop the service, restore `data/` and the database, then start the service and verify `/api/health` and the login page.
 
+## 8.1 TURN relay for audio/video
+
+The release bundle includes a standalone coturn binary. Configure the platform host as a TURN relay:
+
+```bash
+sudo bash deploy/setup-turn.sh --host <server-ip-reachable-by-clients>
+```
+
+Open `3478/TCP`, `3478/UDP`, and `49160-49200/UDP`. The script writes `WEBRTC_TURN_*` settings to `/opt/snmp-monitor/deploy/snmp-nms.env` and restarts the services. Verify `/api/im/webrtc-config` reports `turn_configured: true`.
+
 ## 9. Uninstall
 
 Back up first:
@@ -350,7 +360,7 @@ Passwords, tokens, API keys, private keys, license files and database content ar
 ## 11. Directory layout
 
 ```text
-IOP-v2.22.37/
+IOP-v2.22.43/
 ├── backend/
 ├── frontend/
 ├── deploy/
@@ -388,4 +398,4 @@ See [LICENSE](LICENSE) for the full text. The release package includes `LICENSE`
 
 ## 14. Version
 
-This README corresponds to SNMP Monitor **v2.22.37**. Verify the server, network devices, database, and license before deployment.
+This README corresponds to SNMP Monitor **v2.22.43**. Verify the server, network devices, database, and license before deployment.

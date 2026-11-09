@@ -17,6 +17,8 @@ FILES=(
   deploy/install-systemd.sh
   deploy/snmp-nms-healthcheck.sh
   deploy/apply-permissions.sh
+  deploy/setup-turn.sh
+  offline/bin/busybox
   tools/*.py
 )
 

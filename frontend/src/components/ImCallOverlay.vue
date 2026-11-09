@@ -52,6 +52,9 @@
           </div>
         </div>
         <div class="call-head-actions">
+          <button v-if="imState.call.type === 'video'" type="button" class="call-icon-btn" :disabled="!remoteHasVideo" :title="remoteHasVideo ? '放大视频画面（全屏）' : '等待对方视频'" @click="toggleFullscreen(remoteVideo)">
+            <el-icon><FullScreen /></el-icon>
+          </button>
           <button type="button" class="call-icon-btn" :title="imState.call.minimized ? '展开通话' : '收起（后台继续）'" @click="minimizeCall(!imState.call.minimized)">
             <el-icon><Minus v-if="!imState.call.minimized" /><FullScreen v-else /></el-icon>
           </button>
@@ -62,19 +65,25 @@
       </div>
 
       <div v-show="!imState.call.minimized" class="call-body">
-        <div class="call-stage" :class="{ audio: imState.call.type === 'audio' }">
+        <div class="call-stage" :class="{ audio: imState.call.type === 'audio' }" @dblclick="toggleFullscreen(remoteVideo)">
           <div v-if="imState.call.type === 'audio'" class="call-audio-stage">
             <div class="call-avatar" :class="{ live: imState.call.status === 'active' }">
               <el-icon :size="46"><UserFilled /></el-icon>
             </div>
             <span>{{ imState.call.status === 'calling' ? '正在呼叫…' : '通话中' }}</span>
           </div>
-          <video v-show="imState.call.type === 'video'" ref="remoteVideo" class="call-remote-video" autoplay muted playsinline></video>
+          <video v-show="imState.call.type === 'video' && remoteHasVideo" ref="remoteVideo" class="call-remote-video" autoplay muted playsinline></video>
+          <div v-if="imState.call.type === 'video' && !remoteHasVideo" class="call-video-placeholder">
+            <div class="call-avatar" :class="{ live: imState.call.status === 'active' }">
+              <el-icon :size="34"><UserFilled /></el-icon>
+            </div>
+            <span>{{ imState.call.status === 'calling' ? '等待对方接听…' : '对方未开启摄像头或视频暂不可用' }}</span>
+          </div>
           <div v-if="imState.call.type === 'video' && imState.call.status === 'calling'" class="call-waiting">
             正在呼叫 {{ imState.call.peer?.real_name || imState.call.peer?.username }}…
           </div>
-          <video v-show="imState.call.type === 'video' && imState.call.cameraOn" ref="localVideo" class="call-local-video" autoplay muted playsinline></video>
-          <div v-if="imState.call.type === 'video' && !imState.call.cameraOn" class="call-camera-off">摄像头已关闭</div>
+          <video v-show="imState.call.type === 'video' && localHasVideo && imState.call.cameraOn" ref="localVideo" class="call-local-video" autoplay muted playsinline></video>
+          <div v-if="imState.call.type === 'video' && !localHasVideo" class="call-camera-off">本端无摄像头画面</div>
         </div>
         <audio ref="remoteAudio" autoplay playsinline class="call-hidden-audio"></audio>
         <button v-if="audioBlocked" type="button" class="call-audio-enable" @click="resumeRemoteAudio">
@@ -216,6 +225,8 @@ const remoteVideo = ref(null)
 const localVideo = ref(null)
 const remoteAudio = ref(null)
 const audioBlocked = ref(false)
+const remoteHasVideo = computed(() => Boolean(remoteStream.value?.getVideoTracks?.().length))
+const localHasVideo = computed(() => Boolean(localStream.value?.getVideoTracks?.().length))
 const now = ref(Date.now())
 let timer = null
 const meId = computed(() => Number(currentUser.value?.id || 0))
@@ -318,6 +329,20 @@ function isCameraOff(tile) {
 
 function initialOf(tile) {
   return String(tile.real_name || tile.username || 'U').slice(0, 1).toUpperCase()
+}
+
+function toggleFullscreen(el) {
+  if (!el) return
+  if (document.fullscreenElement) {
+    document.exitFullscreen?.().catch?.(() => {})
+  } else if (el.requestFullscreen) {
+    el.requestFullscreen().catch?.(() => {})
+  }
+}
+
+function toggleTileFullscreen(id) {
+  const el = tileVideoRefs.get(Number(id))
+  if (el) toggleFullscreen(el)
 }
 
 function toggleWhiteboard() {
@@ -433,6 +458,10 @@ onBeforeUnmount(() => {
 .call-remote-video { width: 100%; height: 100%; object-fit: cover; display: block; }
 .call-local-video { position: absolute; right: 8px; bottom: 8px; width: 31%; aspect-ratio: 4 / 3; object-fit: cover; border-radius: 7px; border: 1px solid rgba(148, 233, 255, .6); background: #020b12; }
 .call-waiting { position: absolute; inset: 0; display: grid; place-items: center; color: #bfefff; font-size: 12px; background: rgba(3, 16, 26, .42); }
+.call-video-placeholder { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px; color: #8eb6cc; font-size: 11px; text-align: center; padding: 16px; }
+.call-video-placeholder .call-avatar { width: 58px; height: 58px; }
+.call-stage:not(.audio) { cursor: zoom-in; }
+.call-icon-btn:disabled { opacity: .35; cursor: not-allowed; }
 .call-camera-off { position: absolute; bottom: 8px; right: 8px; padding: 5px 8px; border-radius: 5px; background: rgba(0, 0, 0, .55); color: #a9c7d6; font-size: 10px; }
 .call-hidden-audio { position: absolute; width: 1px; height: 1px; opacity: 0; pointer-events: none; overflow: hidden; }
 .call-audio-enable { margin: 8px 0 0; border: 1px solid #0ea5e9; border-radius: 7px; padding: 6px 10px; background: rgba(14, 165, 233, .16); color: #bae6fd; font-size: 12px; cursor: pointer; display: inline-flex; align-items: center; gap: 5px; animation: im-audio-hint 1.8s ease-in-out infinite; }

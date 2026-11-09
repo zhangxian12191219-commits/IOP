@@ -241,7 +241,7 @@ import { computed, nextTick, onMounted, reactive, ref, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { useRouter } from 'vue-router'
 import { aiApi } from '@/api'
-import { can, currentUser, downloadWithAuth } from '@/store/auth'
+import { can, currentUser, downloadWithAuth, getToken, handoffToken } from '@/store/auth'
 
 const aiStatus = ref({
   configured: false, model: '', name: '玄武', voice_name: '',
@@ -351,6 +351,7 @@ function restoreConversation() {
 }
 
 function openAiScreen() {
+  handoffToken(getToken())
   window.open('/bigscreen/ai', '_blank')
 }
 
