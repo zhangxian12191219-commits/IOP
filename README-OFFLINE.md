@@ -13,8 +13,8 @@
 ## 安装命令
 
 ```bash
-unzip IOP-v2.22.22.zip -d /tmp
-cd /tmp/IOP-v2.22.22
+unzip IOP-v2.22.23.zip -d /tmp
+cd /tmp/IOP-v2.22.23
 sudo bash deploy/apply-permissions.sh
 sudo bash deploy/install-offline.sh
 ```
@@ -68,7 +68,7 @@ sudo bash deploy/prepare-offline-os-packages.sh --target rhel
 ## 校验离线依赖
 
 ```bash
-cd /tmp/IOP-v2.22.22/offline
+cd /tmp/IOP-v2.22.23/offline
 sha256sum -c SHA256SUMS
 ```
 

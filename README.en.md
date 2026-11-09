@@ -2,7 +2,7 @@
 
 An operations and monitoring platform for network devices, security devices, infrastructure, websites, and virtualized environments. It provides asset management, SNMP collection, topology, dashboards, alerts, inspections, data-center visualization, website/certificate monitoring, AI operations, cascade management, and system administration.
 
-- Product version: **v2.22.22**
+- Product version: **v2.22.23**
 - License Studio: **v2.10.1**
 - Backend: Python 3.10+ / FastAPI / SQLAlchemy
 - Frontend: Vue 3 / Vite / Element Plus / ECharts / AntV X6
@@ -105,8 +105,8 @@ sudo dnf install -y python3 python3-pip tar curl unzip
 The release bundle includes a standalone Linux x86_64 Python 3.12 runtime compressed with xz, a static busybox extractor, all required Python wheels, and the built frontend. No Internet, system Python, pip, or apt/dnf package download is required.
 
 ```bash
-unzip IOP-v2.22.22.zip -d /tmp
-cd /tmp/IOP-v2.22.22
+unzip IOP-v2.22.23.zip -d /tmp
+cd /tmp/IOP-v2.22.23
 sudo bash deploy/apply-permissions.sh
 sudo bash deploy/install-offline.sh
 ```
@@ -116,8 +116,8 @@ Requirements: Linux x86_64, glibc 2.17+, systemd, and the base `tar`, `bash`, `c
 ### Install
 
 ```bash
-unzip IOP-v2.22.22.zip -d /tmp
-cd /tmp/IOP-v2.22.22
+unzip IOP-v2.22.23.zip -d /tmp
+cd /tmp/IOP-v2.22.23
 
 # Fix executable bits if the extraction tool dropped them
 bash deploy/apply-permissions.sh
@@ -323,10 +323,23 @@ sudo bash uninstall.sh --purge
 - Logs: `data/logs/backend.log`, `journalctl -u snmp-nms`
 - Health-check timer: `snmp-nms-healthcheck.timer`
 
+### Debug diagnostics
+
+System Settings → Network → Debug log collection creates a redacted ZIP for support:
+
+- Version, platform, disk and load;
+- Recent application logs and ERROR/Traceback summary;
+- Redacted configuration snapshot;
+- Database table counts (no business data);
+- Network interfaces, routes and listening ports;
+- Optional problem description and reproduction steps.
+
+Passwords, tokens, API keys, private keys, license files and database content are excluded or redacted. The latest 20 bundles are retained. Collection and download are audited. Required permission: `settings:view`.
+
 ## 11. Directory layout
 
 ```text
-IOP-v2.22.22/
+IOP-v2.22.23/
 ├── backend/
 ├── frontend/
 ├── deploy/
@@ -364,4 +377,4 @@ See [LICENSE](LICENSE) for the full text. The release package includes `LICENSE`
 
 ## 14. Version
 
-This README corresponds to SNMP Monitor **v2.22.22**. Verify the server, network devices, database, and license before deployment.
+This README corresponds to SNMP Monitor **v2.22.23**. Verify the server, network devices, database, and license before deployment.

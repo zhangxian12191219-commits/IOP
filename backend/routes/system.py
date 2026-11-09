@@ -5,13 +5,15 @@ from typing import Any, Dict
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import FileResponse
+from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from ..models.database import get_db
 from ..models.user import User
-from ..services.auth import get_current_user
+from ..services.auth import get_current_user, has_permission
 from ..services import audit as audit_service
 from ..services import backup as backup_service
+from ..services import debug_bundle
 from ..services import settings as settings_service
 
 logger = logging.getLogger(__name__)
@@ -19,6 +21,16 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/system", tags=["系统维护"])
 
 BACKUP_SETTING_KEYS = ("backup_enabled", "backup_interval_hours", "backup_retention_count")
+
+
+class DebugCollectRequest(BaseModel):
+    note: str = ""
+
+
+def _require_debug(current: User = Depends(get_current_user)) -> User:
+    if not current.is_superuser and not has_permission(current, "settings:view"):
+        raise HTTPException(status_code=403, detail="Debug 日志收集仅系统配置查看权限可操作")
+    return current
 
 
 def _require_superuser(current: User = Depends(get_current_user)) -> User:
@@ -103,4 +115,52 @@ def download_backup(name: str, current: User = Depends(_require_superuser)):
         path=str(path),
         filename=safe,
         media_type="application/octet-stream",
+    )
+
+@router.post("/debug/collect")
+def collect_debug_bundle(
+    payload: DebugCollectRequest,
+    request: Request,
+    db: Session = Depends(get_db),
+    current: User = Depends(_require_debug),
+):
+    """生成脱敏 Debug 诊断包，供用户下载后反馈问题。"""
+    try:
+        result = debug_bundle.create_bundle(db, payload.note)
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("Debug 诊断包生成失败")
+        raise HTTPException(status_code=500, detail=f"Debug 日志收集失败：{exc}") from exc
+    audit_service.record(
+        db, request, module="system", action="create",
+        target_type="debug_bundle", target_name=result["name"],
+        message=f"生成 Debug 诊断包 {result['name']}",
+        operator=current.username,
+    )
+    return result
+
+
+@router.get("/debug/{name}/download")
+def download_debug_bundle(
+    name: str,
+    request: Request,
+    db: Session = Depends(get_db),
+    current: User = Depends(_require_debug),
+):
+    """下载已生成的 Debug 诊断包。"""
+    safe = Path(name).name
+    if not safe.startswith("debug-") or not safe.endswith(".zip"):
+        raise HTTPException(status_code=400, detail="非法的诊断包文件名")
+    path = debug_bundle.DEBUG_DIR / safe
+    if not path.is_file():
+        raise HTTPException(status_code=404, detail="诊断包不存在或已过期")
+    audit_service.record(
+        db, request, module="system", action="download",
+        target_type="debug_bundle", target_name=safe,
+        message=f"下载 Debug 诊断包 {safe}",
+        operator=current.username,
+    )
+    return FileResponse(
+        path=str(path),
+        filename=safe,
+        media_type="application/zip",
     )

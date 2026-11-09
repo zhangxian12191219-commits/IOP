@@ -904,6 +904,12 @@ export const systemApi = {
   downloadUrl(name) {
     return `/api/system/backups/${encodeURIComponent(name)}/download`
   },
+  collectDebug(data = {}) {
+    return api.post('/system/debug/collect', data, { timeout: 180000 })
+  },
+  debugDownloadUrl(name) {
+    return `/api/system/debug/${encodeURIComponent(name)}/download`
+  },
   updateInfo() {
     return api.get('/system/update')
   },

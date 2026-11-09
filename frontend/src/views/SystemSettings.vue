@@ -1988,6 +1988,8 @@
               title="无法读取主机网络信息，请检查后端运行账户权限。"
             />
             <template v-if="networkData">
+              <div class="network-layout">
+                <div class="network-main">
               <el-alert
                 v-if="!networkData.admin"
                 type="error"
@@ -2212,6 +2214,43 @@
                 </el-table>
                 <div class="form-help network-note">计划任务当前支持现有任务的启动/停止/启用/停用；出于安全考虑，暂不开放网页创建任意命令任务。</div>
               </el-card>
+                </div>
+                <aside class="network-aside">
+                  <el-card shadow="never" class="network-card debug-card">
+                    <template #header>
+                      <div class="settings-card-head">
+                        <span>Debug 日志收集</span>
+                        <el-tag size="small" type="success" effect="plain">自动脱敏</el-tag>
+                      </div>
+                    </template>
+                    <div class="debug-intro">
+                      遇到异常时，一键收集版本、系统信息、最近日志、脱敏配置、数据库计数和网络诊断，生成 ZIP 后发送给技术支持分析。
+                    </div>
+                    <el-input
+                      v-model="debugNote"
+                      type="textarea"
+                      :rows="3"
+                      maxlength="1000"
+                      show-word-limit
+                      placeholder="可选：描述问题现象、发生时间、复现步骤"
+                      class="debug-note"
+                    />
+                    <el-button type="primary" class="debug-collect-btn" :loading="debugCollecting" @click="collectDebugBundle">
+                      收集 Debug 日志
+                    </el-button>
+                    <div v-if="debugBundle" class="debug-result">
+                      <div class="debug-result-main">
+                        <b>{{ debugBundle.name }}</b>
+                        <small>{{ formatBytes(debugBundle.size) }} · {{ formatDateTime(debugBundle.created_at) }}</small>
+                      </div>
+                      <el-button type="success" plain size="small" @click="downloadDebugBundle">下载 ZIP</el-button>
+                    </div>
+                    <div class="debug-tips">
+                      包含最近日志和网络诊断；不包含数据库备份、授权文件、明文密码、Token、API Key 或私钥。日志超过 20 份时自动清理旧诊断包。
+                    </div>
+                  </el-card>
+                </aside>
+              </div>
             </template>
           </div>
         </el-tab-pane>
@@ -2470,6 +2509,9 @@ const networkServices = ref([])
 const networkTasks = ref([])
 const networkServiceQuery = ref('')
 const networkActionBusy = ref('')
+const debugNote = ref('')
+const debugCollecting = ref(false)
+const debugBundle = ref(null)
 const adapterDialogVisible = ref(false)
 const routeDialogVisible = ref(false)
 const adapterSaving = ref(false)
@@ -3031,6 +3073,24 @@ async function loadNetworkExtras() {
   }
   networkServicesLoading.value = false
   networkTasksLoading.value = false
+}
+
+async function collectDebugBundle() {
+  debugCollecting.value = true
+  try {
+    const res = await systemApi.collectDebug({ note: debugNote.value })
+    debugBundle.value = res.data
+    ElMessage.success('Debug 日志已收集，已自动脱敏')
+  } catch (e) {
+    ElMessage.error(e.message || 'Debug 日志收集失败')
+  } finally {
+    debugCollecting.value = false
+  }
+}
+
+function downloadDebugBundle() {
+  if (!debugBundle.value?.name) return
+  downloadWithAuth(systemApi.debugDownloadUrl(debugBundle.value.name))
 }
 
 async function loadNetwork() {
@@ -5026,8 +5086,95 @@ onBeforeUnmount(() => {
 .network-stat b.ok { color: #1b9b6a; }
 .network-stat b.danger { color: #d9485f; }
 
+.network-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 330px;
+  gap: 16px;
+  align-items: start;
+}
+
+.network-main {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 13px;
+}
+
+.network-aside {
+  min-width: 0;
+  position: sticky;
+  top: 12px;
+}
+
 .network-card {
   border: 1px solid #e5edf4;
+}
+
+.debug-card {
+  border-color: #cfe8e4;
+}
+
+.debug-intro {
+  color: #526b78;
+  font-size: 12px;
+  line-height: 1.7;
+  margin-bottom: 10px;
+}
+
+.debug-note {
+  margin-bottom: 10px;
+}
+
+.debug-collect-btn {
+  width: 100%;
+}
+
+.debug-result {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-top: 12px;
+  padding: 9px 10px;
+  border: 1px solid #d9efe9;
+  border-radius: 7px;
+  background: #f4fbf8;
+}
+
+.debug-result-main {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.debug-result-main b {
+  color: #245b55;
+  font-size: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.debug-result-main small {
+  color: #6d8a8a;
+  font-size: 11px;
+}
+
+.debug-tips {
+  margin-top: 11px;
+  color: #8a9aa4;
+  font-size: 11px;
+  line-height: 1.65;
+}
+
+@media (max-width: 1200px) {
+  .network-layout {
+    grid-template-columns: 1fr;
+  }
+  .network-aside {
+    position: static;
+  }
 }
 
 .network-note {
