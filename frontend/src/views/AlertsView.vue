@@ -76,10 +76,27 @@
           <el-option label="Ceph 集群健康" value="platform_ceph_health" />
           <el-option label="Ceph OSD 状态" value="platform_ceph_osd" />
           <el-option label="Ceph PG 状态" value="platform_ceph_pg" />
+          <el-option label="API 设备告警" value="api_alert" />
+          <el-option label="IPMI 设备事件" value="ipmi_sel" />
           <el-option label="Ceph MON 仲裁" value="platform_ceph_mon" />
           <el-option label="Ceph 磁盘/设备健康" value="platform_ceph_device" />
           <el-option label="平台存储状态" value="platform_storage_health" />
           <el-option label="平台存储容量" value="platform_storage_usage" />
+        </el-select>
+        <el-select
+          v-model="filters.device_id"
+          placeholder="全部设备"
+          filterable
+          clearable
+          style="width: 220px"
+          @change="onFilterChange"
+        >
+          <el-option
+            v-for="device in deviceOptions"
+            :key="device.id"
+            :label="`${device.name || device.ip_address} (${device.ip_address || '-'})`"
+            :value="device.id"
+          />
         </el-select>
         <el-select v-model="filters.source" :placeholder="t('alerts.allSources')" clearable style="width: 130px" @change="onFilterChange">
           <el-option :label="t('alerts.sourceDevice')" value="device" />
@@ -108,6 +125,7 @@
         <el-button @click="onFilterChange">
           <el-icon><Search /></el-icon>{{ t('alerts.query') }}
         </el-button>
+        <el-button @click="resetFilters">重置</el-button>
       </div>
 
       <div class="alert-view-mode">
@@ -120,6 +138,7 @@
           <div v-if="selectedAlertRows.length" class="alert-selection-bar">
             <span>已选择 <b>{{ selectedAlertRows.length }}</b> 条告警</span>
             <el-button size="small" type="primary" @click="ackSelectedAlerts">批量确认</el-button>
+            <el-button size="small" type="warning" :loading="batchSuppressing" @click="suppressSelectedAlerts">批量抑制</el-button>
             <el-button size="small" type="danger" :loading="batchDeleting" @click="deleteSelectedAlerts">批量删除</el-button>
             <el-button size="small" @click="clearAlertSelection">清空选择</el-button>
             <span class="alert-selection-tip">已选告警时自动刷新已暂停，清空选择后恢复；按住 Shift 点击复选框可连续选择区间</span>
@@ -241,6 +260,7 @@
           <div v-if="selectedAlertRows.length" class="alert-selection-bar">
             <span>已选择 <b>{{ selectedAlertRows.length }}</b> 条告警</span>
             <el-button size="small" type="primary" @click="ackSelectedAlerts">批量确认</el-button>
+            <el-button size="small" type="warning" :loading="batchSuppressing" @click="suppressSelectedAlerts">批量抑制</el-button>
             <el-button size="small" type="danger" :loading="batchDeleting" @click="deleteSelectedAlerts">批量删除</el-button>
             <el-button size="small" @click="clearAlertSelection">清空选择</el-button>
             <span class="alert-selection-tip">已选告警时自动刷新已暂停，清空选择后恢复；按住 Shift 点击复选框可连续选择区间</span>
@@ -564,6 +584,25 @@
     </el-dialog>
 
     <el-dialog v-model="suppressionRulesVisible" :title="t('alerts.suppressionManage')" width="980px">
+      <div class="global-suppression-form">
+        <div class="global-suppression-title">全局默认抑制规则</div>
+        <div class="global-suppression-hint">此处的规则默认对所有设备、网站和虚拟化告警生效；按告警类型匹配。</div>
+        <div class="global-suppression-fields">
+          <el-input v-model="globalSuppression.alert_type" placeholder="告警类型，如 offline、api_alert" style="width: 210px" />
+          <el-select v-model="globalSuppression.alert_level" placeholder="全部级别" clearable style="width: 120px">
+            <el-option label="紧急" value="emergency" />
+            <el-option label="严重" value="critical" />
+            <el-option label="警告" value="warning" />
+            <el-option label="提示" value="info" />
+          </el-select>
+          <el-input-number v-model="globalSuppression.duration_minutes" :min="0" :max="43200" :step="10" controls-position="right" style="width: 130px" />
+          <span class="global-suppression-unit">分钟（0=永久）</span>
+          <el-input v-model="globalSuppression.reason" placeholder="抑制原因（可选）" style="width: 220px" />
+          <el-button type="primary" size="small" :loading="globalSuppressionSaving" @click="createGlobalSuppression">
+            新增全局默认规则
+          </el-button>
+        </div>
+      </div>
       <div class="suppression-toolbar">
         <span class="muted">{{ t('alerts.suppressionListHint') }}</span>
         <el-button size="small" :loading="suppressionLoading" @click="loadSuppressions">
@@ -610,7 +649,7 @@ import { t } from '@/i18n'
 import { ref, reactive, computed, onMounted, onBeforeUnmount, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { useRoute } from 'vue-router'
-import { monitorApi } from '@/api'
+import { assetApi, monitorApi } from '@/api'
 import { downloadWithAuth } from '@/store/auth'
 import { formatDateTime } from '@/utils/time'
 import { useResponsiveViewport } from '@/composables/useResponsiveViewport'
@@ -658,6 +697,13 @@ const suppressForm = reactive({
   reason: '',
   acknowledge_current: true,
 })
+const globalSuppressionSaving = ref(false)
+const globalSuppression = reactive({
+  alert_type: '',
+  alert_level: '',
+  duration_minutes: 60,
+  reason: '',
+})
 const suppressionRulesVisible = ref(false)
 const suppressions = ref([])
 const suppressionLoading = ref(false)
@@ -670,11 +716,13 @@ const initialLevel = String(route.query.level || '').toLowerCase()
 const filters = reactive({
   level: ALERT_LEVELS.includes(initialLevel) ? initialLevel : '',
   type: '',
+  device_id: '',
   source: '',
   ack: '',
   days: '',
   search: '',
 })
+const deviceOptions = ref([])
 
 watch(() => route.query.level, (value) => {
   const level = String(value || '').toLowerCase()
@@ -811,6 +859,7 @@ function sourceTagType(row) {
 
 const selectedAlertKeys = ref([])
 const batchDeleting = ref(false)
+const batchSuppressing = ref(false)
 const autoRefreshPaused = computed(() => selectedAlertKeys.value.length > 0)
 let lastAlertRowKey = ''
 
@@ -945,6 +994,7 @@ function buildParams() {
   const params = {}
   if (filters.level) params.alert_level = filters.level
   if (filters.type) params.alert_type = filters.type
+  if (filters.device_id) params.device_id = filters.device_id
   if (filters.source) params.source = filters.source
   if (filters.days) params.days = filters.days
   if (filters.search) params.search = filters.search
@@ -959,6 +1009,7 @@ async function loadUnack() {
     let items = res.data
     if (filters.level) items = items.filter((a) => a.alert_level === filters.level)
     if (filters.type) items = items.filter((a) => a.alert_type === filters.type)
+    if (filters.device_id) items = items.filter((a) => Number(a.device_id) === Number(filters.device_id))
     if (filters.source) items = items.filter((a) => (a.source || 'device') === filters.source)
     if (filters.search) {
       const kw = filters.search.toLowerCase()
@@ -1000,6 +1051,28 @@ async function loadAll() {
     ElMessage.error(e.message || t('alerts.loadAlertsFailed'))
   } finally {
     loading.value = false
+  }
+}
+
+function resetFilters() {
+  Object.assign(filters, {
+    level: '',
+    type: '',
+    device_id: '',
+    source: '',
+    ack: '',
+    days: '',
+    search: '',
+  })
+  onFilterChange()
+}
+
+async function loadDeviceOptions() {
+  try {
+    const { data } = await assetApi.getList({ page: 1, size: 500 })
+    deviceOptions.value = Array.isArray(data?.items) ? data.items : []
+  } catch {
+    deviceOptions.value = []
   }
 }
 
@@ -1124,6 +1197,37 @@ async function submitSuppress() {
   }
 }
 
+async function createGlobalSuppression() {
+  const alertType = String(globalSuppression.alert_type || '').trim()
+  if (!alertType) {
+    ElMessage.warning('请输入要抑制的告警类型')
+    return
+  }
+  globalSuppressionSaving.value = true
+  try {
+    const res = await monitorApi.createSuppression({
+      source: 'all',
+      device_id: null,
+      website_target_id: null,
+      alert_type: alertType,
+      alert_level: globalSuppression.alert_level || null,
+      reason: String(globalSuppression.reason || '').trim(),
+      duration_minutes: Number(globalSuppression.duration_minutes) || 0,
+      acknowledge_current: true,
+    })
+    ElMessage.success(`全局默认抑制规则已创建，确认当前匹配告警 ${res.data?.acknowledged || 0} 条`)
+    globalSuppression.alert_type = ''
+    globalSuppression.alert_level = ''
+    globalSuppression.duration_minutes = 60
+    globalSuppression.reason = ''
+    await loadSuppressions()
+  } catch (e) {
+    ElMessage.error(e?.response?.data?.detail || e.message || '创建全局抑制规则失败')
+  } finally {
+    globalSuppressionSaving.value = false
+  }
+}
+
 async function loadSuppressions() {
   suppressionLoading.value = true
   try {
@@ -1153,6 +1257,37 @@ async function removeSuppression(row) {
     await loadSuppressions()
   } catch (e) {
     ElMessage.error(e?.response?.data?.detail || e.message || t('alerts.operationFailed'))
+  }
+}
+
+async function suppressSelectedAlerts() {
+  const rows = [...selectedAlertRows.value]
+  if (!rows.length) return
+  try {
+    await ElMessageBox.confirm(
+      `确定批量抑制选中的 ${rows.length} 条告警吗？抑制后不再出现在活动告警和再提醒中，可在“已抑制告警”中恢复。`,
+      '批量抑制告警',
+      { type: 'warning', confirmButtonText: '批量抑制', cancelButtonText: '取消' },
+    )
+  } catch {
+    return
+  }
+  batchSuppressing.value = true
+  try {
+    const res = await monitorApi.bulkHideAlerts(
+      rows.map((row) => ({ id: row.id, source: row.source || 'device' })),
+    )
+    const suppressed = Number(res.data?.suppressed || 0)
+    const skipped = Number(res.data?.skipped || 0)
+    if (skipped) ElMessage.warning(`已抑制 ${suppressed} 条，跳过 ${skipped} 条`)
+    else ElMessage.success(`已批量抑制 ${suppressed} 条告警，可在“已抑制告警”中恢复`)
+    clearAlertSelection()
+    await loadAll()
+    await loadHiddenAlerts()
+  } catch (e) {
+    ElMessage.error(e?.response?.data?.detail || e.message || '批量抑制失败')
+  } finally {
+    batchSuppressing.value = false
   }
 }
 
@@ -1295,6 +1430,7 @@ onMounted(() => {
   window.addEventListener('resize', updateTableHeight, { passive: true })
   window.addEventListener('focus', onVisibilityChange)
   document.addEventListener('visibilitychange', onVisibilityChange)
+  loadDeviceOptions()
   loadUnack()
   loadHiddenAlerts()
   // 告警恢复对账在接口读取时执行，缩短轮询以尽快移出已恢复告警
@@ -1413,6 +1549,16 @@ onBeforeUnmount(() => {
   font-size: 12px;
 }
 
+.global-suppression-form {
+  margin-bottom: 14px;
+  padding: 12px;
+  border: 1px solid var(--el-border-color-light);
+  border-radius: 8px;
+}
+.global-suppression-title { font-weight: 600; margin-bottom: 4px; }
+.global-suppression-hint { color: #8a9bab; font-size: 12px; margin-bottom: 10px; }
+.global-suppression-fields { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.global-suppression-unit { color: #8a9bab; font-size: 12px; }
 .suppression-toolbar {
   display: flex;
   align-items: center;

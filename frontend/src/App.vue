@@ -254,7 +254,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { authApi, monitorApi, settingsApi, licenseApi } from '@/api'
 import {
-  can, currentUser, logout, refreshMe,
+  can, currentUser, logout, refreshMe, refreshToken,
 } from '@/store/auth'
 import { settings, loadPublicSettings, refreshMs } from '@/store/settings'
 import { alertSoundEnabled, toggleAlertSound, playAlertSound, loadAlertSoundInfo, unlockAlertAudio, scheduleAlertBroadcast, isAlertBroadcastSpeaking } from '@/utils/alertSound'
@@ -310,6 +310,7 @@ const lastAlertCount = ref(null)
 const lastSoundAt = ref(0)
 let alertTimer = null
 let idleTimer = null
+let displayKeepAliveTimer = null
 
 // 大屏页面已移除，菜单统一使用路由跳转
 function handleMenuSelect(index) {
@@ -319,6 +320,25 @@ function handleMenuSelect(index) {
 const isFullscreen = computed(
   () => route.meta?.layout === 'immersive' || route.meta?.layout === 'blank'
 )
+
+// 大屏/机房数字孪生是长期展示页签：不受空闲注销影响，并定时静默续期。
+function isDisplayPage() {
+  return route.meta?.layout === 'immersive'
+    || String(route.path || '').startsWith('/bigscreen')
+    || /^\/rooms\/[^/]+\/showcase/.test(String(route.path || ''))
+}
+
+function syncDisplayKeepAlive() {
+  if (displayKeepAliveTimer) {
+    clearInterval(displayKeepAliveTimer)
+    displayKeepAliveTimer = null
+  }
+  if (!isDisplayPage()) return
+  refreshToken(true).catch(() => {})
+  displayKeepAliveTimer = setInterval(() => {
+    if (isDisplayPage()) refreshToken(true).catch(() => {})
+  }, 30 * 60 * 1000)
+}
 
 const systemName = computed(() => settings.system_name || t('header.defaultSystemName'))
 const timezoneLabel = computed(() => settings.timezone || '')
@@ -809,6 +829,7 @@ function resetIdleTimer() {
     clearTimeout(idleTimer)
     idleTimer = null
   }
+  if (isDisplayPage()) return
   const minutes = Number(settings.auto_logout_minutes) || 0
   if (minutes <= 0 || route.meta?.public) return
   idleTimer = setTimeout(() => {
@@ -884,7 +905,16 @@ watch(
       startAlertTimer()
       bindIdleEvents()
       resetIdleTimer()
+      syncDisplayKeepAlive()
     }
+  }
+)
+
+watch(
+  () => route.fullPath,
+  () => {
+    resetIdleTimer()
+    syncDisplayKeepAlive()
   }
 )
 
@@ -916,6 +946,7 @@ onMounted(async () => {
   startAlertTimer()
   bindIdleEvents()
   resetIdleTimer()
+  syncDisplayKeepAlive()
   window.addEventListener('nms:alerts-updated', onAlertsUpdated)
   window.addEventListener('keydown', handleSidebarShortcut)
   window.addEventListener('storage', onAiFunctionFocus)
@@ -924,6 +955,7 @@ onMounted(async () => {
 onBeforeUnmount(() => {
   if (alertTimer) clearInterval(alertTimer)
   if (idleTimer) clearTimeout(idleTimer)
+  if (displayKeepAliveTimer) clearInterval(displayKeepAliveTimer)
   unbindIdleEvents()
   window.removeEventListener('nms:alerts-updated', onAlertsUpdated)
   if (alertsUpdatedTimer) clearTimeout(alertsUpdatedTimer)

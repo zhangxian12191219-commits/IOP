@@ -1,9 +1,9 @@
-﻿# SNMP Monitor
+# SNMP Monitor
 
 An operations and monitoring platform for network devices, security devices, infrastructure, websites, and virtualized environments. It provides asset management, SNMP collection, topology, dashboards, alerts, inspections, data-center visualization, website/certificate monitoring, AI operations, cascade management, and system administration.
 
-- Product version: **v2.22.43**
-- License Studio: **v2.10.1**
+- Product version: **v2.23.36**
+- License Studio: **v2.10.2**
 - Backend: Python 3.10+ / FastAPI / SQLAlchemy
 - Frontend: Vue 3 / Vite / Element Plus / ECharts / AntV X6
 - Database: SQLite (default) / MySQL / PostgreSQL
@@ -78,6 +78,10 @@ A fresh installation contains no commercial license file and starts as the **Ope
 - The license is bound to the machine code and stored at `data/license.key`.
 - Existing licenses are preserved during upgrades.
 
+## 2.1 Browser requirement
+
+3D views require WebGL2. If a browser cannot create a WebGL2 context, the room screen falls back to a flat cabinet view and explains the reason.
+
 ## 3. Linux systemd deployment
 
 ### Requirements
@@ -105,8 +109,8 @@ sudo dnf install -y python3 python3-pip tar curl unzip
 The release bundle includes a standalone Linux x86_64 Python 3.12 runtime compressed with xz, a static busybox extractor, all required Python wheels, and the built frontend. No Internet, system Python, pip, or apt/dnf package download is required.
 
 ```bash
-unzip IOP-v2.22.43.zip -d /tmp
-cd /tmp/IOP-v2.22.43
+unzip IOP-v2.23.36.zip -d /tmp
+cd /tmp/IOP-v2.23.36
 sudo bash deploy/apply-permissions.sh
 sudo bash deploy/install-offline.sh
 ```
@@ -116,8 +120,8 @@ Requirements: Linux x86_64, glibc 2.17+, systemd, bash/coreutils/sed/grep/awk. I
 ### Install
 
 ```bash
-unzip IOP-v2.22.43.zip -d /tmp
-cd /tmp/IOP-v2.22.43
+unzip IOP-v2.23.36.zip -d /tmp
+cd /tmp/IOP-v2.23.36
 
 # Fix executable bits if the extraction tool dropped them
 bash deploy/apply-permissions.sh
@@ -360,7 +364,7 @@ Passwords, tokens, API keys, private keys, license files and database content ar
 ## 11. Directory layout
 
 ```text
-IOP-v2.22.43/
+IOP-v2.23.36/
 ├── backend/
 ├── frontend/
 ├── deploy/
@@ -398,4 +402,4 @@ See [LICENSE](LICENSE) for the full text. The release package includes `LICENSE`
 
 ## 14. Version
 
-This README corresponds to SNMP Monitor **v2.22.43**. Verify the server, network devices, database, and license before deployment.
+This README corresponds to SNMP Monitor **v2.23.36**. Verify the server, network devices, database, and license before deployment.

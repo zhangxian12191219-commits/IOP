@@ -20,9 +20,12 @@ WEB_HTTPS_BASELINE_KEY = "web_https_baseline_v1"
 # 历史旧名称以转义形式保留，仅用于兼容已有数据，不再作为产品展示名称
 LEGACY_SYSTEM_NAMES = {"\u0053\u004e\u004d\u0050 \u7f51\u7ba1\u76d1\u63a7\u7cfb\u7edf", "\u7f51\u7ba1\u76d1\u63a7\u7cfb\u7edf", "智能化运维服务平台"}
 COPYRIGHT_OPENSOURCE_NAME = "智能运维服务平台 · 开源版"
-COPYRIGHT_COMMERCIAL_NAME = "大连伊莱科技有限公司 · 商业版"
+COPYRIGHT_COMMERCIAL_NAME = "智能运维服务平台"
 AUTO_COPYRIGHT_NAMES = {
     "智能运维服务平台",
+    "智能运维服务平台 · 商业版",
+    "大连伊莱科技有限公司",
+    "大连伊莱科技有限公司 · 商业版",
     COPYRIGHT_OPENSOURCE_NAME,
     COPYRIGHT_COMMERCIAL_NAME,
 }

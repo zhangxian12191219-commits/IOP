@@ -341,7 +341,7 @@
 
         <!-- ==================== 基本设置 ==================== -->
         <el-tab-pane :label="t('settings.tabBasic')" name="basic">
-          <el-form :model="form" label-width="150px" class="settings-form" :disabled="!canEdit">
+          <el-form :model="form" label-width="150px" class="settings-form" :disabled="!canEdit" label-position="left">
             <el-form-item :label="t('settings.systemName')">
               <el-input v-model="form.system_name" maxlength="60" show-word-limit style="max-width: 420px" />
               <div class="form-tip">{{ t('settings.systemNameTip') }}</div>
@@ -667,7 +667,7 @@
             />
 
             <el-divider content-position="left">NTP 自动同步</el-divider>
-            <el-form :model="timeForm" label-width="150px" class="settings-form" :disabled="!canEdit">
+            <el-form :model="timeForm" label-width="150px" class="settings-form" :disabled="!canEdit" label-position="left">
               <el-form-item label="启用 NTP 自动同步">
                 <el-switch v-model="timeForm.ntp_enabled" />
                 <div class="form-tip">
@@ -726,7 +726,7 @@
             </el-form>
 
             <el-divider content-position="left">手动设置系统时间</el-divider>
-            <el-form label-width="150px" class="settings-form" :disabled="!canEdit">
+            <el-form label-width="150px" class="settings-form" :disabled="!canEdit" label-position="left">
               <el-form-item label="日期时间">
                 <el-date-picker
                   v-model="timeForm.datetime"
@@ -782,7 +782,7 @@
 
         <!-- ==================== 登录与安全 ==================== -->
         <el-tab-pane :label="t('settings.tabSecurity')" name="security">
-          <el-form :model="form" label-width="150px" class="settings-form" :disabled="!canEdit">
+          <el-form :model="form" label-width="150px" class="settings-form" :disabled="!canEdit" label-position="left">
             <el-form-item :label="t('settings.captchaEnabled')">
               <el-switch v-model="form.captcha_enabled" />
               <div class="form-tip">{{ t('settings.captchaTip') }}</div>
@@ -956,7 +956,7 @@
 
           <el-divider content-position="left">{{ t('settings.changePassword') }}</el-divider>
 
-          <el-form ref="passwordFormRef" :model="passwordForm" :rules="passwordRules" label-width="150px" class="settings-form">
+          <el-form ref="passwordFormRef" :model="passwordForm" :rules="passwordRules" label-width="150px" class="settings-form" label-position="left">
             <el-form-item :label="t('settings.oldPassword')" prop="old_password">
               <el-input v-model="passwordForm.old_password" type="password" show-password style="max-width: 320px" />
             </el-form-item>
@@ -986,7 +986,7 @@
                 {{ form.totp_policy === 'off' ? '未要求' : form.totp_policy === 'all' ? '全部用户' : '指定用户' }}
               </el-tag>
             </div>
-            <el-form :model="form" label-width="150px" class="settings-form" :disabled="!canEdit">
+            <el-form :model="form" label-width="150px" class="settings-form" :disabled="!canEdit" label-position="left">
               <el-form-item label="二次验证范围">
                 <el-radio-group v-model="form.totp_policy">
                   <el-radio label="off">关闭</el-radio>
@@ -1026,7 +1026,7 @@
 
         <!-- ==================== 数据库与缓存 ==================== -->
         <el-tab-pane :label="t('settings.tabIntegration')" name="integration">
-          <el-form :model="form" label-width="160px" class="settings-form" :disabled="!canEdit">
+          <el-form :model="form" label-width="150px" class="settings-form" :disabled="!canEdit" label-position="left">
             <el-alert
               type="info"
               :closable="false"
@@ -1276,7 +1276,7 @@
 
         <!-- ==================== 采集设置 ==================== -->
         <el-tab-pane :label="t('settings.tabCollection')" name="collection">
-          <el-form :model="form" label-width="150px" class="settings-form" :disabled="!canEdit">
+          <el-form :model="form" label-width="150px" class="settings-form" :disabled="!canEdit" label-position="left">
             <el-form-item :label="t('settings.collectionInterval')">
               <el-input-number v-model="form.collection_interval" :min="10" :max="3600" :step="10" />
               <span class="unit">{{ t('settings.unitSeconds') }}</span>
@@ -1296,7 +1296,7 @@
 
         <!-- ==================== 日志转发 ==================== -->
         <el-tab-pane :label="t('settings.tabLogForward')" name="logforward">
-          <el-form :model="form" label-width="150px" class="settings-form" :disabled="!canEdit">
+          <el-form :model="form" label-width="150px" class="settings-form" :disabled="!canEdit" label-position="left">
             <el-form-item :label="t('settings.logForwardEnabled')">
               <el-switch v-model="form.log_forward_enabled" />
               <div class="form-tip">
@@ -1521,7 +1521,7 @@
           </template>
 
           <el-divider content-position="left">{{ t('settings.dbBackupTitle') }}</el-divider>
-          <el-form :model="form" label-width="150px" class="settings-form" :disabled="!canEdit">
+          <el-form :model="form" label-width="150px" class="settings-form" :disabled="!canEdit" label-position="left">
             <el-form-item :label="t('settings.autoBackupEnabled')">
               <el-switch v-model="form.backup_enabled" />
               <div class="form-tip">{{ t('settings.dbBackupHint') }}</div>
@@ -1883,7 +1883,7 @@
                   </el-tag>
                 </div>
               </template>
-              <el-form label-width="140px" class="cluster-form">
+              <el-form label-width="150px" class="cluster-form" label-position="left">
                 <el-form-item label="启用多节点集群">
                   <el-switch v-model="clusterForm.cluster_enabled" />
                   <span class="form-help">需要有效商业授权；节点上限由授权文件控制</span>
@@ -1979,7 +1979,7 @@
                   <el-button size="small" @click="refreshLbConfig">生成 Nginx 配置</el-button>
                 </div>
               </template>
-              <el-form label-width="140px" class="cluster-form">
+              <el-form label-width="150px" class="cluster-form" label-position="left">
                 <el-form-item label="启用负载均衡配置">
                   <el-switch v-model="clusterForm.lb_enabled" />
                 </el-form-item>
@@ -4715,9 +4715,43 @@ onBeforeUnmount(() => {
   gap: 8px;
 }
 
-.settings-form {
+.settings-form,
+.cluster-form {
   max-width: 860px;
   padding-top: 8px;
+}
+
+/* 表单内容统一左对齐：标签列固定，输入框/复选框/单选组从同一左边界开始 */
+.settings-form :deep(.el-form-item__label),
+.cluster-form :deep(.el-form-item__label) {
+  justify-content: flex-start;
+  text-align: left;
+}
+
+.settings-form :deep(.el-form-item__content),
+.cluster-form :deep(.el-form-item__content) {
+  justify-content: flex-start;
+  align-items: flex-start;
+}
+
+.settings-form :deep(.el-checkbox-group),
+.settings-form :deep(.el-radio-group),
+.cluster-form :deep(.el-checkbox-group),
+.cluster-form :deep(.el-radio-group) {
+  justify-content: flex-start;
+  width: 100%;
+}
+
+.settings-form :deep(.el-checkbox),
+.settings-form :deep(.el-radio),
+.cluster-form :deep(.el-checkbox),
+.cluster-form :deep(.el-radio) {
+  margin-left: 0;
+}
+
+.settings-form :deep(.el-form-item),
+.cluster-form :deep(.el-form-item) {
+  align-items: flex-start;
 }
 
 .unit {
@@ -4920,11 +4954,24 @@ onBeforeUnmount(() => {
 }
 
 .form-tip {
+  display: block;
+  flex: 0 0 100%;
   width: 100%;
+  max-width: 100%;
+  margin: 4px 0 0;
+  padding: 0;
+  box-sizing: border-box;
+  text-align: left;
   font-size: 12px;
   color: #909399;
   line-height: 1.6;
-  margin-top: 4px;}
+}
+
+.settings-form .form-tip,
+.cluster-form .form-tip {
+  align-self: flex-start;
+  text-align: left;
+}
 
 .hint-box {
   padding: 10px 14px;

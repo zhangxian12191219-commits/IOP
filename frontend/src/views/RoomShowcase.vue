@@ -97,7 +97,28 @@
         </div>
 
         <div class="rs-scene">
-          <div ref="threeRef" class="rs-three-canvas"></div>
+          <div v-if="threeAvailable" ref="threeRef" class="rs-three-canvas"></div>
+          <div v-else class="rs-three-fallback">
+            <div class="rs-fallback-state">
+              <el-icon><WarningFilled /></el-icon>
+              <strong>3D 视图暂不可用</strong>
+              <span>{{ threeError || '当前浏览器无法创建 WebGL2 3D 视图' }}</span>
+            </div>
+            <div class="rs-fallback-grid">
+              <button
+                v-for="cabinet in cabinets"
+                :key="`fallback-${cabinet.id}`"
+                type="button"
+                class="rs-fallback-cabinet"
+                :class="cabinetStatus(cabinet)"
+                @click="selectedCabinetId = cabinet.id"
+              >
+                <span class="rs-fallback-led"></span>
+                <strong>{{ cabinet.name }}</strong>
+                <small>{{ cabinet.usage?.used_u || 0 }}/{{ cabinet.u_capacity || 0 }}U · {{ (cabinet.usage?.used_power_w || 0) / 1000 }}kW</small>
+              </button>
+            </div>
+          </div>
           <div class="rs-scene-topline">
             <div class="rs-room-label">
               <b>{{ room?.name }}</b>
@@ -131,16 +152,17 @@
             :style="{ left: `${hoverPosition.x}px`, top: `${hoverPosition.y}px` }"
           >
             <div class="rs-tip-head">
-              <i :class="hoverDevice.status"></i>
+              <i :class="deviceDisplayStatus(hoverDevice)"></i>
               <strong>{{ hoverDevice.name }}</strong>
-              <el-tag :type="hoverDevice.status === 'online' ? 'success' : hoverDevice.status === 'warning' ? 'warning' : 'info'" size="small">
-                {{ statusText(hoverDevice.status) }}
+              <el-tag :type="deviceDisplayStatus(hoverDevice) === 'offline' ? 'danger' : deviceDisplayStatus(hoverDevice) === 'warning' ? 'warning' : 'success'" size="small">
+                {{ deviceDisplayStatus(hoverDevice) === 'warning' ? `告警 ${hoverDevice.alert_count || 0}` : statusText(deviceDisplayStatus(hoverDevice)) }}
               </el-tag>
             </div>
             <div class="rs-tip-line"><span>IP 地址</span><b>{{ hoverDevice.ip_address || '-' }}</b></div>
             <div class="rs-tip-line"><span>设备类型</span><b>{{ hoverDevice.device_type || '-' }}</b></div>
             <div class="rs-tip-line"><span>所在机柜</span><b>{{ hoverDevice.cabinetName }} · {{ formatURange(hoverDevice.u_position, hoverDevice.u_height) }}</b></div>
             <div class="rs-tip-line"><span>CPU / 内存</span><b>{{ hoverDevice.cpu_usage ?? '-' }}% / {{ hoverDevice.memory_usage ?? '-' }}%</b></div>
+            <div v-if="hoverDevice.alert_count" class="rs-tip-line"><span>告警级别</span><b :style="{ color: alertLevelCss(deviceAlertLevel(hoverDevice)) }">{{ deviceAlertLevel(hoverDevice).toUpperCase() }} · {{ hoverDevice.alert_count }} 条</b></div>
             <div class="rs-tip-action">点击查看设备详情</div>
           </div>
 
@@ -166,6 +188,8 @@
               <div><span>设备</span><b>{{ selectedCabinet.usage?.device_count || 0 }} 台</b></div>
               <div><span>U 位</span><b>{{ selectedCabinet.usage?.used_u || 0 }} / {{ selectedCabinet.u_capacity || 0 }}U</b></div>
               <div><span>功耗</span><b>{{ ((selectedCabinet.usage?.used_power_w || 0) / 1000).toFixed(2) }} kW</b></div>
+              <div><span>温度</span><b>{{ cabinetClimate(selectedCabinet).temperature ?? '--' }}°C</b></div>
+              <div><span>湿度</span><b>{{ cabinetClimate(selectedCabinet).humidity ?? '--' }}%</b></div>
               <div><span>柜门</span><b :class="selectedCabinet.door_state === 'open' ? 'online' : ''">{{ selectedCabinet.door_state === 'open' ? '已打开' : '已关闭' }}</b></div>
             </div>
             <div class="rs-detail-bar"><i :style="{ width: `${Math.min(selectedCabinet.usage?.u_percent || 0, 100)}%` }"></i></div>
@@ -375,6 +399,8 @@ let clockTimer = null
 
 let threeRenderer = null
 let threeScene = null
+const threeAvailable = ref(true)
+const threeError = ref('')
 let threeCamera = null
 let threeControls = null
 let threeAnimation = null
@@ -385,6 +411,7 @@ let threeFitDistance = 20
 let cabinetGroup3d = null
 let cabinetObjectMap = new Map()
 let cabinetDoorMap = new Map()
+let alertBlinkObjects = []
 let raycaster = null
 let pointer = null
 let threeSignature = ''
@@ -435,12 +462,31 @@ function clearThreeView() {
 
 const currentRoomId = ref(Number(route.params.id))
 
-const devices = computed(() => cabinets.value.flatMap((cab) => (cab.devices || []).map((device) => ({
-  ...device,
-  cabinetName: cab.name,
-}))))
+const alertFallbackByDevice = computed(() => {
+  const map = new Map()
+  const rank = { info: 1, warning: 2, critical: 3, emergency: 4 }
+  ;(alerts.value || []).forEach((alert) => {
+    if (!alert?.device_id || alert.resolved_at) return
+    const current = map.get(alert.device_id) || { count: 0, level: '' }
+    current.count += 1
+    if (rank[alert.alert_level] >= rank[current.level]) current.level = alert.alert_level || 'warning'
+    map.set(alert.device_id, current)
+  })
+  return map
+})
+
+const devices = computed(() => cabinets.value.flatMap((cab) => (cab.devices || []).map((device) => {
+  const fallback = alertFallbackByDevice.value.get(device.id)
+  const alertCount = Math.max(Number(device.alert_count || 0), Number(fallback?.count || 0))
+  return {
+    ...device,
+    alert_count: alertCount,
+    alert_level: device.alert_level || fallback?.level || '',
+    cabinetName: cab.name,
+  }
+})))
 const onlineCount = computed(() => devices.value.filter((d) => d.status === 'online').length)
-const warningCount = computed(() => devices.value.filter((d) => d.status === 'warning').length)
+const warningCount = computed(() => devices.value.filter((d) => d.status === 'warning' || Number(d.alert_count || 0) > 0).length)
 const offlineCount = computed(() => devices.value.filter((d) => d.status === 'offline').length)
 const totalPower = computed(() => cabinets.value.reduce((sum, cab) => sum + Number(cab.usage?.used_power_w || 0), 0))
 const powerCapacity = computed(() => cabinets.value.reduce((sum, cab) => sum + Number(cab.power_capacity_w || 0), 0))
@@ -500,6 +546,40 @@ function gaugeStyle(value, color) {
   return { '--gauge': `${percent}%`, '--gauge-color': color }
 }
 
+const ALERT_LEVEL_COLORS = {
+  info: 0x38bdf8,
+  warning: 0xfbbf24,
+  critical: 0xfb7185,
+  emergency: 0xef4444,
+}
+function alertLevelColor(level) {
+  return ALERT_LEVEL_COLORS[level] || ALERT_LEVEL_COLORS.warning
+}
+function alertLevelCss(level) {
+  return { info: '#38bdf8', warning: '#fbbf24', critical: '#fb7185', emergency: '#ef4444' }[level] || '#fbbf24'
+}
+
+function deviceDisplayStatus(device) {
+  if (Number(device?.alert_count || 0) > 0) return 'warning'
+  return device?.status || 'unknown'
+}
+
+function deviceAlertLevel(device) {
+  return device?.alert_level || (Number(device?.alert_count || 0) > 0 ? 'warning' : '')
+}
+
+function cabinetClimate(cab) {
+  const sensors = sensorSummary.value.sensors || []
+  const matched = sensors.filter((sensor) => String(sensor.name || '').includes(String(cab?.name || '')))
+  const source = matched.length ? matched : sensors
+  const temps = source.map((sensor) => Number(sensor.last_temperature)).filter((v) => Number.isFinite(v))
+  const hums = source.map((sensor) => Number(sensor.last_humidity)).filter((v) => Number.isFinite(v))
+  return {
+    temperature: temps.length ? (temps.reduce((a, b) => a + b, 0) / temps.length).toFixed(1) : null,
+    humidity: hums.length ? (hums.reduce((a, b) => a + b, 0) / hums.length).toFixed(1) : null,
+  }
+}
+
 function cabinetStatus(cab) {
   if ((cab.devices || []).some((device) => device.status === 'offline')) return 'offline'
   if ((cab.devices || []).some((device) => device.status === 'warning')) return 'warning'
@@ -527,21 +607,78 @@ function disposeObject(object) {
   })
 }
 
+function createThreeRenderer() {
+  const attempts = [
+    { antialias: true, alpha: true },
+    { antialias: false, alpha: true },
+    { antialias: false, alpha: false },
+  ]
+  let lastError = null
+  for (const options of attempts) {
+    try {
+      return new THREE.WebGLRenderer({ ...options, powerPreference: 'high-performance' })
+    } catch (error) {
+      lastError = error
+    }
+  }
+  throw lastError || new Error('WebGL renderer unavailable')
+}
+
+function failThree(message) {
+  threeError.value = message || '3D 视图初始化失败'
+  threeAvailable.value = false
+  if (threeAnimation) {
+    cancelAnimationFrame(threeAnimation)
+    threeAnimation = null
+  }
+  try { threeRenderer?.dispose?.() } catch { /* ignore */ }
+  threeRenderer = null
+  threeScene = null
+  threeCamera = null
+  threeControls = null
+}
+
 function initThree() {
   if (!threeRef.value || threeRenderer) return
+  try {
+    const probe = document.createElement('canvas')
+    const webgl2 = probe.getContext('webgl2')
+    if (!webgl2) {
+      failThree('当前浏览器未启用 WebGL2。请升级 Safari/Chrome，开启硬件加速后重试；下方为平面机柜视图。')
+      return
+    }
+  } catch {
+    failThree('当前浏览器不支持 WebGL2，无法显示 3D 机房；下方为平面机柜视图。')
+    return
+  }
   threeScene = new THREE.Scene()
   threeCamera = new THREE.PerspectiveCamera(42, 1, 0.1, 300)
-  threeRenderer = new THREE.WebGLRenderer({ antialias: true, alpha: true })
+  try {
+    threeRenderer = createThreeRenderer()
+  } catch (error) {
+    failThree(`3D 渲染器创建失败：${error?.message || 'WebGL 不可用'}`)
+    return
+  }
   threeRenderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2))
   threeRenderer.setClearColor(0x000000, 0)
   threeRenderer.toneMapping = THREE.ACESFilmicToneMapping
   threeRenderer.toneMappingExposure = 1.12
   threeRenderer.outputColorSpace = THREE.SRGBColorSpace
   threeRenderer.domElement.className = 'rs-three-dom'
+  threeRenderer.domElement.addEventListener('webglcontextlost', (event) => {
+    event.preventDefault()
+    failThree('WebGL 图形上下文已丢失。请刷新页面或关闭其他占用显卡的标签页。')
+  })
   threeRef.value.appendChild(threeRenderer.domElement)
-  const pmrem = new THREE.PMREMGenerator(threeRenderer)
-  threeScene.environment = pmrem.fromScene(new RoomEnvironment(), 0.035).texture
-  pmrem.dispose()
+  // 环境贴图在部分 Safari/GPU 上会初始化失败；失败时退回普通灯光，不阻断 3D。
+  try {
+    const pmrem = new THREE.PMREMGenerator(threeRenderer)
+    threeScene.environment = pmrem.fromScene(new RoomEnvironment(), 0.035).texture
+    pmrem.dispose()
+  } catch (error) {
+    threeScene.environment = null
+    console.warn('3D environment map unavailable, falling back to lights:', error)
+  }
 
   threeControls = new OrbitControls(threeCamera, threeRenderer.domElement)
   threeControls.enableDamping = true
@@ -599,11 +736,13 @@ function initThree() {
   threeResizeObserver = new ResizeObserver(resizeThreeViewport)
   threeResizeObserver.observe(threeRef.value)
   window.addEventListener('resize', resizeThreeViewport)
+  requestAnimationFrame(resizeThreeViewport)
+  setTimeout(resizeThreeViewport, 120)
   animateThree()
 }
 
 function resizeThreeViewport() {
-  if (!threeRenderer || !threeCamera || !threeRef.value) return
+  if (!threeAvailable.value || !threeRenderer || !threeCamera || !threeRef.value) return
   const width = threeRef.value.clientWidth
   const height = threeRef.value.clientHeight
   if (!width || !height) return
@@ -625,15 +764,15 @@ function formatCabinetPower(watts) {
 function makeCabinetLabel(name, color, cab) {
   const canvas = document.createElement('canvas')
   canvas.width = 340
-  canvas.height = 108
+  canvas.height = 132
   const ctx = canvas.getContext('2d')
-  ctx.clearRect(0, 0, 340, 108)
+  ctx.clearRect(0, 0, 340, 132)
   ctx.fillStyle = 'rgba(6, 18, 30, 0.88)'
   ctx.strokeStyle = `${color}99`
   ctx.lineWidth = 2
   ctx.beginPath()
-  ctx.roundRect?.(4, 4, 332, 98, 10)
-  if (!ctx.roundRect) ctx.rect(4, 4, 332, 98)
+  ctx.roundRect?.(4, 4, 332, 122, 10)
+  if (!ctx.roundRect) ctx.rect(4, 4, 332, 122)
   ctx.fill()
   ctx.stroke()
 
@@ -641,14 +780,14 @@ function makeCabinetLabel(name, color, cab) {
   ctx.textBaseline = 'middle'
   ctx.font = '700 18px "Microsoft YaHei", sans-serif'
   ctx.fillStyle = '#bfe9f8'
-  ctx.fillText(String(name || '').slice(0, 24), 170, 28)
+  ctx.fillText(String(name || '').slice(0, 24), 170, 24)
 
   const usedU = Number(cab?.usage?.used_u || 0)
   const capacity = Number(cab?.u_capacity || 42)
   const deviceCount = Number(cab?.usage?.device_count || (cab?.devices || []).length)
   ctx.font = '600 13px "Microsoft YaHei", sans-serif'
   ctx.fillStyle = '#7dd3fc'
-  ctx.fillText(`占用 ${usedU}U / ${capacity}U · ${deviceCount} 台设备`, 170, 56)
+  ctx.fillText(`占用 ${usedU}U / ${capacity}U · ${deviceCount} 台设备`, 170, 48)
 
   const powerW = Number(cab?.usage?.used_power_w || 0)
   const powerCapacity = Number(cab?.usage?.power_capacity_w || cab?.power_capacity_w || 0)
@@ -659,13 +798,17 @@ function makeCabinetLabel(name, color, cab) {
     : `使用功率 ${formatCabinetPower(powerW)}`
   ctx.font = '700 13px "Microsoft YaHei", sans-serif'
   ctx.fillStyle = powerColor
-  ctx.fillText(powerText, 170, 82)
+  ctx.fillText(powerText, 170, 72)
+  const climate = cabinetClimate(cab)
+  ctx.font = '600 12px "Microsoft YaHei", sans-serif'
+  ctx.fillStyle = '#7ddfd1'
+  ctx.fillText(`温湿度 ${climate.temperature ?? '--'}°C / ${climate.humidity ?? '--'}%`, 170, 98)
 
   const texture = new THREE.CanvasTexture(canvas)
   texture.colorSpace = THREE.SRGBColorSpace
   const material = new THREE.SpriteMaterial({ map: texture, transparent: true, depthWrite: false })
   const sprite = new THREE.Sprite(material)
-  sprite.scale.set(1.8, 0.57, 1)
+  sprite.scale.set(1.8, 0.70, 1)
   return sprite
 }
 
@@ -758,7 +901,18 @@ function makeDeviceTag(device, start, heightU, y, unitHeight = CABINET_H / 42) {
   ctx.fillStyle = '#d9f6ff'
   ctx.textAlign = 'center'
   ctx.textBaseline = 'middle'
-  ctx.fillText(formatURange(start, heightU), 128, 32)
+  ctx.fillText(formatURange(start, heightU), 104, 32)
+  const alertCount = Number(device.alert_count || 0)
+  if (alertCount > 0) {
+    ctx.fillStyle = '#ef4444'
+    ctx.beginPath()
+    ctx.roundRect?.(190, 9, 57, 46, 12)
+    if (!ctx.roundRect) ctx.rect(190, 9, 57, 46)
+    ctx.fill()
+    ctx.fillStyle = '#ffffff'
+    ctx.font = '700 28px "Microsoft YaHei", sans-serif'
+    ctx.fillText(`⚠${alertCount > 99 ? '99+' : alertCount}`, 218, 33)
+  }
   const texture = new THREE.CanvasTexture(canvas)
   texture.colorSpace = THREE.SRGBColorSpace
   const sprite = new THREE.Sprite(new THREE.SpriteMaterial({
@@ -1038,8 +1192,10 @@ function buildCabinet(cab, x, z) {
     const heightU = Math.max(1, Number(device.u_height) || 1)
     const deviceHeight = Math.min(CABINET_H * 0.82, heightU * unit * 0.86)
     const centerY = (start - 1 + heightU / 2) * unit
-    const deviceColor = { online: 0x22c55e, warning: 0xf59e0b, offline: 0xef4444, unknown: 0x64748b }[device.status] || 0x64748b
-    const deviceInfo = { ...device, cabinetName: cab.name }
+    const alertCount = Number(device.alert_count || 0)
+    const alertColor = alertCount > 0 ? alertLevelColor(device.alert_level) : null
+    const deviceColor = alertColor || ({ online: 0x22c55e, warning: 0xf59e0b, offline: 0xef4444, unknown: 0x64748b }[device.status] || 0x64748b)
+    const deviceInfo = { ...device, cabinetName: cab.name, alert_count: alertCount, alert_color: alertColor }
     const panelZ = CABINET_D / 2 - 0.13
     const face = new THREE.Mesh(
       new THREE.BoxGeometry(CABINET_W * 0.76, deviceHeight, 0.04),
@@ -1067,12 +1223,24 @@ function buildCabinet(cab, x, z) {
       vent.position.set(-CABINET_W * 0.04, centerY - deviceHeight * 0.28 + index * (deviceHeight * 0.16), panelZ + 0.024)
       group.add(vent)
     }
+    const ledMaterial = new THREE.MeshBasicMaterial({ color: deviceColor, transparent: true, opacity: 0.95 })
     const led = new THREE.Mesh(
       new THREE.BoxGeometry(0.022, 0.014, 0.012),
-      new THREE.MeshBasicMaterial({ color: deviceColor }),
+      ledMaterial,
     )
     led.position.set(CABINET_W * 0.32, centerY + deviceHeight * 0.26, panelZ + 0.028)
     group.add(led)
+    if (alertCount > 0) {
+      const frame = new THREE.LineSegments(
+        new THREE.EdgesGeometry(new THREE.BoxGeometry(CABINET_W * 0.79, deviceHeight * 1.04, 0.05)),
+        new THREE.LineBasicMaterial({ color: deviceColor, transparent: true, opacity: 0.9 }),
+      )
+      frame.position.set(0, centerY, panelZ + 0.052)
+      frame.userData.alertPhase = Math.random() * Math.PI * 2
+      frame.userData.alertFrame = true
+      group.add(frame)
+      alertBlinkObjects.push(frame)
+    }
     const ledStrip = new THREE.Mesh(
       new THREE.BoxGeometry(CABINET_W * 0.6, 0.009, 0.008),
       new THREE.MeshBasicMaterial({ color: deviceColor, transparent: true, opacity: 0.72 }),
@@ -1095,7 +1263,7 @@ function buildCabinet(cab, x, z) {
 }
 
 function buildThreeScene() {
-  if (!threeRef.value) return
+  if (!threeAvailable.value || !threeRef.value) return
   if (!threeRenderer) initThree()
   if (!threeScene) return
   if (worldGroup) {
@@ -1106,6 +1274,7 @@ function buildThreeScene() {
   threeScene.add(worldGroup)
   cabinetObjectMap.clear()
   cabinetDoorMap.clear()
+  alertBlinkObjects = []
 
   const rowData = cabinetRows.value
   const maxCols = Math.max(...rowData.map((row) => row.items.length), 1)
@@ -1388,6 +1557,7 @@ function onThreeClick(event) {
 }
 
 function animateThree() {
+  if (!threeAvailable.value) return
   threeAnimation = requestAnimationFrame(animateThree)
   if (!threeRenderer || !threeScene || !threeCamera) return
   if (threeControls) {
@@ -1407,7 +1577,17 @@ function animateThree() {
     if (Math.abs(delta) > 0.001) entry.pivot.rotation.y += delta * 0.14
     else entry.pivot.rotation.y = entry.target
   })
-  threeRenderer.render(threeScene, threeCamera)
+  const blinkTime = performance.now() / 1000
+  alertBlinkObjects.forEach((frame) => {
+    const pulse = 0.5 + 0.5 * Math.sin(blinkTime * 3.8 + (frame.userData.alertPhase || 0))
+    if (frame.material) frame.material.opacity = 0.28 + pulse * 0.72
+    if (frame.isLineSegments) frame.scale.setScalar(1 + pulse * 0.035)
+  })
+  try {
+    threeRenderer.render(threeScene, threeCamera)
+  } catch (error) {
+    failThree(`3D 渲染失败：${error?.message || 'WebGL 渲染异常'}`)
+  }
 }
 
 async function toggleCabinetDoor(cabinet) {
@@ -1537,7 +1717,7 @@ async function refresh() {
     const [layoutRes, sensorRes, alertRes, roomsRes] = await Promise.allSettled([
       roomApi.layout(id),
       roomApi.sensorSummary(id),
-      monitorApi.getUnackAlerts(),
+      monitorApi.getActiveAlerts(),
       roomApi.list(),
     ])
     if (layoutRes.status === 'fulfilled') {
@@ -1575,10 +1755,14 @@ async function refresh() {
       usedU: cab.usage?.used_u,
       powerW: cab.usage?.used_power_w,
       powerCapacity: cab.usage?.power_capacity_w,
+      temperature: cabinetClimate(cab).temperature,
+      humidity: cabinetClimate(cab).humidity,
       devices: (cab.devices || []).map((device) => ({
         id: device.id,
         name: device.name,
         status: device.status,
+        alertCount: device.alert_count,
+        alertLevel: device.alert_level,
         u: device.u_position,
         h: device.u_height,
         power: device.power_watts,
@@ -2125,6 +2309,28 @@ watch(manualAdjust, applyManualAdjust)
 
 .rs-room-label b { color: #b9e9f8; font-size: 10px; }
 .rs-room-label span { color: #4f7188; font-size: 8px; }
+
+.rs-three-fallback {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  overflow: auto;
+  padding: 48px 18px 20px;
+  background: radial-gradient(ellipse at 50% 35%, rgba(14, 94, 130, 0.24), transparent 65%), #050d18;
+}
+.rs-fallback-state { display: flex; flex-direction: column; align-items: center; gap: 6px; max-width: 520px; margin: 0 auto 18px; text-align: center; color: #8eb6cc; font-size: 11px; }
+.rs-fallback-state .el-icon { color: #fbbf24; font-size: 28px; }
+.rs-fallback-state strong { color: #dff8ff; font-size: 13px; }
+.rs-fallback-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(130px, 1fr)); gap: 10px; max-width: 900px; margin: 0 auto; }
+.rs-fallback-cabinet { position: relative; min-height: 74px; padding: 10px; border: 1px solid rgba(56, 189, 248, 0.22); border-radius: 9px; background: rgba(8, 23, 38, 0.9); color: #c7e8f7; text-align: left; cursor: pointer; }
+.rs-fallback-cabinet:hover { border-color: #38bdf8; background: rgba(14, 50, 70, 0.95); }
+.rs-fallback-cabinet.warning { border-color: rgba(251, 191, 36, 0.55); }
+.rs-fallback-cabinet.offline { border-color: rgba(251, 113, 133, 0.55); }
+.rs-fallback-cabinet strong { display: block; margin-top: 8px; font-size: 12px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rs-fallback-cabinet small { display: block; margin-top: 4px; color: #6b8da0; font-family: Consolas, monospace; font-size: 9px; }
+.rs-fallback-led { display: block; width: 7px; height: 7px; border-radius: 50%; background: #00e0a1; }
+.rs-fallback-cabinet.warning .rs-fallback-led { background: #fbbf24; }
+.rs-fallback-cabinet.offline .rs-fallback-led { background: #fb7185; }
 
 .rs-three-controls {
   display: flex;

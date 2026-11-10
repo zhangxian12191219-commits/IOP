@@ -120,6 +120,7 @@ OID_IF_DESCR = "1.3.6.1.2.1.2.2.1.2"
 OID_IF_TYPE = "1.3.6.1.2.1.2.2.1.3"
 OID_IF_MTU = "1.3.6.1.2.1.2.2.1.4"
 OID_IF_SPEED = "1.3.6.1.2.1.2.2.1.5"
+OID_IF_HIGH_SPEED = "1.3.6.1.2.1.31.1.1.1.15"
 OID_IF_PHYS_ADDRESS = "1.3.6.1.2.1.2.2.1.6"
 OID_IF_ADMIN_STATUS = "1.3.6.1.2.1.2.2.1.7"
 OID_IF_OPER_STATUS = "1.3.6.1.2.1.2.2.1.8"
@@ -128,6 +129,7 @@ OID_IF_IN_ERRORS = "1.3.6.1.2.1.2.2.1.14"
 OID_IF_OUT_OCTETS = "1.3.6.1.2.1.2.2.1.16"
 OID_IF_OUT_ERRORS = "1.3.6.1.2.1.2.2.1.20"
 OID_IF_NAME = "1.3.6.1.2.1.31.1.1.1.1"
+OID_IF_ALIAS = "1.3.6.1.2.1.31.1.1.1.18"
 OID_IF_HC_IN_OCTETS = "1.3.6.1.2.1.31.1.1.1.6"
 OID_IF_HC_OUT_OCTETS = "1.3.6.1.2.1.31.1.1.1.10"
 
@@ -1183,13 +1185,14 @@ class SNMPClient:
                 logger.debug("华为 iBMC 组件明细读取失败 %s: %s", self.host, exc)
 
 
-        # 非 Dell/华为或表缺失时，回退 ENTITY-SENSORS，至少保留多个温度/风扇点
-        if not temperatures and not fans:
+        # 非 Dell/华为或表缺失时，回退 ENTITY-SENSORS，补齐温度/风扇/电源
+        if not temperatures or not fans or not power_supplies:
             try:
                 values = await self._walk_value_map(OID_ENT_SENSOR_VALUE)
                 types = await self._walk_value_map(OID_ENT_SENSOR_TYPE)
                 scales = await self._walk_value_map(OID_ENT_SENSOR_SCALE)
                 names = await self._walk_value_map(OID_ENT_PHYS_DESCR, decode=True)
+                statuses = await self._walk_value_map(OID_ENT_SENSOR_STATUS)
                 for idx, raw in values.items():
                     value = _as_float(raw)
                     if value is None:
@@ -1202,17 +1205,52 @@ class SNMPClient:
                     elif scale == 10:
                         value *= 10
                     name = str(names.get(idx) or f"传感器 {idx}")
-                    if str(types.get(idx)) in TEMP_SENSOR_TYPES and -40 <= value <= 200:
-                        temperatures.append({
-                            "index": idx, "name": name, "value": round(value, 1),
-                            "unit": "°C", "kind": self._temperature_kind(name),
-                        })
-                    elif str(types.get(idx)) in {"6", "9"}:
-                        fans.append({
-                            "index": idx, "name": name, "value": round(value, 0), "unit": "RPM",
-                        })
+                    sensor_type = str(types.get(idx) or "")
+                    status_num = _as_int(statuses.get(idx))
+                    if sensor_type in TEMP_SENSOR_TYPES and -40 <= value <= 200:
+                        if not any(item.get("index") == idx for item in temperatures):
+                            temperatures.append({
+                                "index": idx, "name": name, "value": round(value, 1),
+                                "unit": "°C", "kind": self._temperature_kind(name),
+                            })
+                    elif sensor_type in {"6", "9"}:
+                        if not any(item.get("index") == idx for item in fans):
+                            fans.append({
+                                "index": idx, "name": name, "value": round(value, 0), "unit": "RPM",
+                            })
+                    elif sensor_type in {"3", "4", "5"}:
+                        if not any(item.get("index") == idx for item in power_supplies):
+                            power_supplies.append({
+                                "index": idx,
+                                "name": name,
+                                "model": "",
+                                "status": "ok" if status_num in (None, 1) else "fault",
+                                "status_label": "正常" if status_num in (None, 1) else "异常",
+                                "watts": round(value, 1) if sensor_type == "5" else None,
+                                "voltage": round(value, 1) if sensor_type == "3" else None,
+                                "present": True,
+                            })
             except Exception as exc:  # noqa: BLE001
                 logger.debug("ENTITY 组件明细读取失败 %s: %s", self.host, exc)
+
+        # 网络设备没有独立硬盘表时，用 HOST-RESOURCES 存储表补齐容量视图
+        if not disks:
+            try:
+                disk_info = await self.get_disk_info()
+                for disk in (disk_info or {}).get("disks", []):
+                    total_mb = float(disk.get("total_mb") or 0)
+                    used_mb = float(disk.get("used_mb") or 0)
+                    disks.append({
+                        "index": disk.get("index"),
+                        "name": disk.get("name") or "存储",
+                        "model": "",
+                        "size_gb": round(total_mb / 1024, 2) if total_mb else None,
+                        "used_gb": round(used_mb / 1024, 2) if used_mb else None,
+                        "status": "ok",
+                        "status_label": "正常",
+                    })
+            except Exception as exc:  # noqa: BLE001
+                logger.debug("HOST-RESOURCES 存储读取失败 %s: %s", self.host, exc)
 
         def _bad_text(value: Any) -> bool:
             text = str(value or "").strip().lower()
@@ -1248,9 +1286,12 @@ class SNMPClient:
         """接口表：状态 + 流量计数（支持 64 位 HC 计数器）"""
         names = {_last_index(o): _decode_octets(v) for o, v in await self.walk(OID_IF_NAME)}
         descrs = {_last_index(o): _decode_octets(v) for o, v in await self.walk(OID_IF_DESCR)}
+        aliases = {_last_index(o): _decode_octets(v) for o, v in await self.walk(OID_IF_ALIAS)}
         types = {_last_index(o): _as_int(v) for o, v in await self.walk(OID_IF_TYPE)}
         mtus = {_last_index(o): _as_int(v) for o, v in await self.walk(OID_IF_MTU)}
         speeds = {_last_index(o): _as_int(v) for o, v in await self.walk(OID_IF_SPEED)}
+        # ifHighSpeed 的单位是 Mbps；高速接口的 ifSpeed 常被截断为 4.29Gbps 或返回 0。
+        high_speeds = {_last_index(o): _as_int(v) for o, v in await self.walk(OID_IF_HIGH_SPEED)}
         macs = {_last_index(o): _decode_mac(v) for o, v in await self.walk(OID_IF_PHYS_ADDRESS)}
         admins = {_last_index(o): str(v).strip() for o, v in await self.walk(OID_IF_ADMIN_STATUS)}
         opers = {_last_index(o): str(v).strip() for o, v in await self.walk(OID_IF_OPER_STATUS)}
@@ -1271,11 +1312,15 @@ class SNMPClient:
             result.append({
                 "index": idx,
                 "name": names.get(idx) or descrs.get(idx) or f"if{idx}",
-                "description": descrs.get(idx) or "",
+                "description": aliases.get(idx) or descrs.get(idx) or "",
                 "mac": macs.get(idx),
                 "type": types.get(idx),
                 "mtu": mtus.get(idx),
-                "speed": speeds.get(idx),
+                "speed": (
+                    high_speeds.get(idx) * 1_000_000
+                    if high_speeds.get(idx) and high_speeds.get(idx) > 0
+                    else speeds.get(idx)
+                ),
                 "admin_status": IF_ADMIN_MAP.get(admin or "", "unknown"),
                 "oper_status": IF_OPER_MAP.get(oper or "", "unknown"),
                 "in_octets": hc_in.get(idx) if hc_in.get(idx) is not None else in_octets.get(idx),

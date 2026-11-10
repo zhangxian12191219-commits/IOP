@@ -4,8 +4,8 @@
 
 面向网络设备、安全设备、服务器、网站和虚拟化/容器环境的统一监控运维平台，覆盖资产管理、SNMP 采集、网络拓扑、3D 大屏、告警、巡检、配置备份、机房、MIB、AI 运维、级联和系统管理。
 
-- 当前版本：**v2.22.43**
-- 授权签发平台：**License Studio v2.10.1**
+- 当前版本：**v2.23.36**
+- 授权签发平台：**License Studio v2.10.2**
 - 后端：Python 3.12 / FastAPI / SQLAlchemy
 - 前端：Vue 3 / Vite / Element Plus / ECharts / AntV X6
 - 数据库：PostgreSQL（自动供给，失败回退 SQLite）/ MySQL / SQLite
@@ -90,6 +90,7 @@ IOP 用于统一纳管企业内网中的网络、安全和计算资源，把原�
 - VMware、Proxmox、H3C CAS、KVM、Docker、Kubernetes 只读纳管；
 - 宿主机、虚拟机、平台告警和容量；
 - 机房、机柜、U 位、功率和 3D 机房视图；
+- 3D 视图需要浏览器支持 WebGL2；不支持时自动显示平面机柜视图。
 - 机房容量、功率和上架风险提示。
 
 ### 2.6 资产识别与 MIB 匹配
@@ -213,6 +214,20 @@ API 对接仅用于存储设备和备份一体机。服务器请选择 IPMI 对�
 ---
 
 ## 3. 当前版本改进
+
+### v2.23.36
+
+- 3D 大屏增加 WebGL2 能力检测；
+- 渲染器/PMREM 初始化失败时自动降级，不再白屏；
+- WebGL2 不可用时显示平面机柜视图和明确原因；
+- 适配 macOS Safari/Chrome 的 WebGL2 兼容性排查。
+
+### v2.22.44
+
+- 机房“机房展示”改为新浏览器页签打开；
+- 所有沉浸式大屏页签禁用空闲自动注销，并定时静默续期；
+- 大屏 401 先续期重试，不跳登录页；
+- 大屏 token 默认 30 天，适合长期展示。
 
 ### v2.22.43
 
@@ -425,7 +440,7 @@ flowchart LR
 ### 5.1 Docker Compose
 
 ```bash
-cd IOP-v2.22.43
+cd IOP-v2.23.36
 cp .env.example .env
 ```
 
@@ -460,7 +475,7 @@ https://<服务器IP>/
 ### 5.2 Linux systemd
 
 ```bash
-cd IOP-v2.22.43
+cd IOP-v2.23.36
 sudo bash deploy/install-systemd.sh
 sudo systemctl status snmp-nms
 ```
@@ -480,8 +495,8 @@ sudo bash deploy/install-systemd.sh --with-postgres --with-redis
 离线环境使用：
 
 ```bash
-unzip IOP-v2.22.43.zip -d /tmp
-cd /tmp/IOP-v2.22.43
+unzip IOP-v2.23.36.zip -d /tmp
+cd /tmp/IOP-v2.23.36
 sudo bash deploy/apply-permissions.sh
 sudo bash deploy/install-offline.sh
 ```
@@ -523,7 +538,7 @@ sudo cat /opt/snmp-monitor/data/initial_admin_password.txt
 安装前可校验：
 
 ```bash
-cd /tmp/IOP-v2.22.43/offline
+cd /tmp/IOP-v2.23.36/offline
 sha256sum -c SHA256SUMS
 ```
 
@@ -541,7 +556,7 @@ sha256sum -c SHA256SUMS
 ### 5.4 源码运行
 
 ```bash
-cd IOP-v2.22.43
+cd IOP-v2.23.36
 ./start.sh --build
 ```
 
@@ -888,6 +903,28 @@ privilege.py
 
 ---
 
+### 10.8 大屏长期展示
+
+机房展示和各类大屏使用独立浏览器页签，适合长期观看：
+
+- 机房管理 → “机房展示”使用新页签打开；
+- 沉浸式大屏页面不执行空闲自动注销；
+- 大屏页签每 30 分钟静默续期一次；
+- 大屏续期 token 默认有效 **720 小时（30 天）**；
+- 大屏接口返回 401 时先续期重试，不跳转登录页；
+- 续期失败时保留当前展示页，不强制退出。
+
+相关环境变量：
+
+```ini
+# 普通管理会话令牌有效期（小时）
+AUTH_TOKEN_HOURS=12
+# 大屏/数字孪生页签静默续期令牌有效期（小时）
+AUTH_DISPLAY_TOKEN_HOURS=720
+```
+
+如果更换浏览器或清空站点存储，原有 token 会失效，需要重新登录；这是浏览器安全策略，不是大屏自动退出。
+
 ## 11. 安全设计
 
 - JWT 使用 HMAC-SHA256 签名；
@@ -915,7 +952,7 @@ cd frontend && npm run build
 ## 12. 目录结构
 
 ```text
-IOP-v2.22.43/
+IOP-v2.23.36/
 ├── backend/                  FastAPI 后端
 ├── frontend/                 Vue 3 前端和构建产物
 ├── deploy/                   systemd、离线安装、Web 网关脚本
@@ -969,6 +1006,24 @@ IOP-v2.22.43/
 - 当前用户是否有 `ai:view` / `ai:use` 权限；
 - AI 限流是否触发。
 
+### 3D 大屏在 Mac 上空白
+
+3D 机房使用 Three.js WebGL2 渲染。先确认浏览器能力：
+
+```text
+https://get.webgl.org/webgl2/
+```
+
+如果 WebGL2 不可用：
+
+- 使用最新版 Chrome / Edge；
+- 升级 macOS 和 Safari；
+- 关闭“锁定模式”；
+- 避免在无 GPU 加速的远程桌面或虚拟机中查看；
+- Chrome 可打开 `chrome://gpu` 检查 WebGL2 是否硬件加速。
+
+v2.23.36 起，WebGL2 不可用或初始化失败时会显示原因和平面机柜视图，不再白屏；如果仍然只有空白，请强制刷新或关闭旧页签后重新打开。
+
 ### 授权无效或到期
 
 授权文件被篡改、机器码变化或到期时，系统会阻断管理功能。  
@@ -992,10 +1047,10 @@ MPL-2.0 允许使用、修改和分发本项目，修改后的 MPL 覆盖文件�
 
 ## 15. 版本
 
-当前版本：**v2.22.43**
+当前版本：**v2.23.36**
 
 ```text
 后端：Python 3.12 / FastAPI
 前端：Vue 3 / Vite / Element Plus
-授权签发：License Studio v2.10.1
+授权签发：License Studio v2.10.2
 ```

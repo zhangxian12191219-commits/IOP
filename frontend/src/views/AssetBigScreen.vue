@@ -400,10 +400,12 @@ function alertFloatStyle(_alert, index) {
 
 function alertTimeText(alert) {
   const raw = alert?.created_at
-  if (!raw) return '--:--'
+  if (!raw) return '--'
   const text = /[zZ]|[+-]\d{2}:?\d{2}$/.test(raw) ? raw : `${raw}Z`
   const date = new Date(text)
-  return Number.isNaN(date.getTime()) ? '--:--' : date.toLocaleTimeString('zh-CN', { hour12: false })
+  if (Number.isNaN(date.getTime())) return '--'
+  const pad = (value) => String(value).padStart(2, '0')
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`
 }
 
 async function loadData() {

@@ -143,6 +143,8 @@ class Config:
     # 未设置或仍是公开默认值时，自动生成并持久化到 data/.auth_secret。
     AUTH_SECRET = _resolve_auth_secret()
     AUTH_TOKEN_HOURS = int(os.getenv("AUTH_TOKEN_HOURS", "12"))
+    # 大屏/数字孪生页签使用长时 token，并由前端定时静默续期
+    AUTH_DISPLAY_TOKEN_HOURS = int(os.getenv("AUTH_DISPLAY_TOKEN_HOURS", "720"))
     # 首次启动自动创建的管理员账号；密码为空时随机生成并写入
     # data/initial_admin_password.txt，首次登录必须修改。
     AUTH_DEFAULT_ADMIN = os.getenv("AUTH_DEFAULT_ADMIN", "admin")

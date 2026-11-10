@@ -131,6 +131,25 @@ export async function login(username, password, options = {}) {
   return user
 }
 
+/**
+ * 静默续期当前登录令牌。
+ * 大屏页签调用 refreshToken(true)，获取长时 token，避免长时间展示被过期踢出。
+ */
+export async function refreshToken(display = false) {
+  const token = getToken()
+  if (!token) return null
+  const res = await axios.post(
+    `/api/auth/refresh${display ? '?display=1' : ''}`,
+    {},
+    { headers: { Authorization: `Bearer ${token}` } },
+  )
+  const data = res.data || {}
+  if (!data.token) return null
+  setToken(data.token, isRemembered())
+  if (data.user) setUser(data.user)
+  return data.token
+}
+
 export async function refreshMe() {
   const token = getToken()
   if (!token) return null

@@ -180,8 +180,8 @@
         </el-table-column>
         <el-table-column v-if="!isCompact" label="接入方式" width="88" align="center">
           <template #default="{ row }">
-            <el-tag size="small" :type="(row.monitor_type || 'snmp') === 'snmp' ? 'info' : 'success'">
-              {{ (row.monitor_type || 'snmp') === 'snmp' ? `SNMP ${row.snmp_version}` : (row.monitor_type === 'tcp' ? `TCP:${row.tcp_port || 80}` : 'Ping') }}
+            <el-tag size="small" :type="monitorTypeTag(row)">
+              {{ monitorTypeLabel(row) }}
             </el-tag>
           </template>
         </el-table-column>
@@ -871,6 +871,22 @@ const batchIcon = ref('')
 const batchApplying = ref(false)
 const batchPresets = ref([])
 const presetLoading = ref(false)
+
+function monitorTypeLabel(row) {
+  const type = String(row.monitor_type || 'snmp').toLowerCase()
+  if (type === 'snmp') return `SNMP ${row.snmp_version || 'v2c'}`
+  if (type === 'tcp') return `TCP:${row.tcp_port || 80}`
+  if (type === 'api') return 'API 对接'
+  if (type === 'ipmi') return 'IPMI'
+  return 'Ping'
+}
+
+function monitorTypeTag(row) {
+  const type = String(row.monitor_type || 'snmp').toLowerCase()
+  if (type === 'snmp') return 'info'
+  if (type === 'ping' || type === 'tcp') return 'success'
+  return 'warning'
+}
 
 const searchForm = reactive({
   search: '',

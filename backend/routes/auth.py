@@ -272,6 +272,22 @@ def get_me(
     return _user_payload(db, current)
 
 
+@router.post("/refresh")
+def refresh_session(
+    display: bool = False,
+    current: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """大屏页签静默续期；display=1 使用长时 token，避免展示终端被 12 小时过期踢出。"""
+    hours = Config.AUTH_DISPLAY_TOKEN_HOURS if display else Config.AUTH_TOKEN_HOURS
+    return {
+        "token": create_token(current, hours=hours),
+        "token_type": "bearer",
+        "expires_in_hours": hours,
+        "user": _user_payload(db, current),
+    }
+
+
 @router.post("/change-password")
 def change_password(
     payload: ChangePasswordRequest,

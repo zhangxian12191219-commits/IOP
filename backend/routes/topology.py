@@ -3,7 +3,7 @@ import json
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 from sqlalchemy import and_, func
 from sqlalchemy.orm import Session
-from typing import Dict, Any
+from typing import Dict, Any, List
 from datetime import datetime, timedelta
 
 from ..config import Config
@@ -134,6 +134,29 @@ def _status_map(db: Session, devices, metrics: Dict[int, DeviceMetric]) -> Dict[
     return status
 
 
+def _alert_stats_map(db: Session, ids: List[int]) -> Dict[int, Dict[str, Any]]:
+    """活动告警数量与最高级别，用于拓扑节点角标/闪烁。"""
+    stats: Dict[int, Dict[str, Any]] = {}
+    if not ids:
+        return stats
+    rows = (
+        db.query(Alert.device_id, Alert.alert_level)
+        .filter(
+            Alert.device_id.in_(ids),
+            Alert.resolved_at.is_(None),
+            Alert.is_hidden.isnot(True),
+        )
+        .all()
+    )
+    rank = {"info": 1, "warning": 2, "critical": 3, "emergency": 4}
+    for device_id, level in rows:
+        item = stats.setdefault(device_id, {"count": 0, "level": ""})
+        item["count"] += 1
+        if rank.get(level or "", 0) >= rank.get(item["level"] or "", 0):
+            item["level"] = level or ""
+    return stats
+
+
 def _normalize_anchor(value: Any) -> Any:
     """校验并归一化拖拽锚点，坐标是设备框内的相对位置 0~1。"""
     if not isinstance(value, dict):
@@ -148,6 +171,17 @@ def _normalize_anchor(value: Any) -> Any:
     return {"x": round(x, 4), "y": round(y, 4)}
 
 
+def _normalize_color(value: Any) -> str:
+    text = str(value or "").strip()
+    if text and len(text) == 7 and text.startswith("#"):
+        try:
+            int(text[1:], 16)
+            return text.lower()
+        except ValueError:
+            return ""
+    return ""
+
+
 def _normalize_edge_offset(value: Any) -> Any:
     """校验连线手动偏移量。"""
     if not isinstance(value, dict):
@@ -159,7 +193,26 @@ def _normalize_edge_offset(value: Any) -> Any:
         return None
     if not (-20000 <= x <= 20000 and -20000 <= y <= 20000):
         return None
-    return {"x": round(x, 2), "y": round(y, 2)}
+    result = {"x": round(x, 2), "y": round(y, 2)}
+    color = _normalize_color(value.get("color"))
+    if color:
+        result["color"] = color
+    raw_points = value.get("points")
+    if isinstance(raw_points, list):
+        points = []
+        for item in raw_points[:4]:
+            if not isinstance(item, dict):
+                continue
+            try:
+                px = float(item.get("x", 0))
+                py = float(item.get("y", 0))
+            except (TypeError, ValueError):
+                continue
+            if -20000 <= px <= 20000 and -20000 <= py <= 20000:
+                points.append({"x": round(px, 2), "y": round(py, 2)})
+        if points:
+            result["points"] = points
+    return result
 
 
 def _positive_int(value: Any) -> Any:
@@ -355,6 +408,16 @@ def _normalize_cloud_links(
             "target": target,
             "source_interface": str(item.get("source_interface") or "").strip()[:200],
             "target_interface": str(item.get("target_interface") or "").strip()[:200],
+            "color": _normalize_color(item.get("color")),
+            "edge_offset": _normalize_edge_offset({
+                "x": item.get("offset_x", 0), "y": item.get("offset_y", 0),
+                "points": item.get("offset_points") or [],
+            }),
+            "edge_label_offset": _normalize_edge_offset({
+                "x": item.get("label_offset_x", 0), "y": item.get("label_offset_y", 0)
+            }),
+            "source_anchor": _normalize_anchor(item.get("source_anchor")),
+            "dest_anchor": _normalize_anchor(item.get("dest_anchor")),
         })
     result.sort(key=lambda link: link["id"])
     return result
@@ -375,6 +438,7 @@ def _build_topology(db: Session, request: Request = None) -> Dict[str, Any]:
     device_ids = [d.id for d in devices]
     metrics = _latest_metric_map(db, device_ids)
     statuses = _status_map(db, devices, metrics)
+    alert_stats = _alert_stats_map(db, device_ids)
 
     # 接口缓存：{device_id: {if_name: iface}}，用于把连线映射到实际接口速率
     iface_cache: Dict[int, Dict[str, DeviceInterface]] = {}
@@ -395,6 +459,8 @@ def _build_topology(db: Session, request: Request = None) -> Dict[str, Any]:
             "model": device.model or "",
             "icon": device.icon,
             "status": statuses.get(device.id, "unknown"),
+            "alert_count": int(alert_stats.get(device.id, {}).get("count", 0)),
+            "alert_level": alert_stats.get(device.id, {}).get("level", ""),
             "is_enabled": bool(device.is_enabled),
             "cpu_usage": metric.cpu_usage if metric else None,
             "memory_usage": metric.memory_usage if metric else None,
@@ -433,10 +499,16 @@ def _build_topology(db: Session, request: Request = None) -> Dict[str, Any]:
         max_flow = max(flows) if flows else None
         utilization = round(max_flow / capacity * 100, 1) if max_flow and capacity else None
 
+        source_status = (src_if.if_oper_status or "up") if src_if else "unknown"
+        dest_status = (dst_if.if_oper_status or "up") if dst_if else "unknown"
         oper_up = bool(
-            (src_if is None or (src_if.if_oper_status or "up") == "up")
-            and (dst_if is None or (dst_if.if_oper_status or "up") == "up")
+            (src_if is None or source_status == "up")
+            and (dst_if is None or dest_status == "up")
         )
+        source_errors = int((src_if.in_errors or 0) + (src_if.out_errors or 0)) if src_if else 0
+        dest_errors = int((dst_if.in_errors or 0) + (dst_if.out_errors or 0)) if dst_if else 0
+        has_errors = (source_errors + dest_errors) > 0
+        interface_status = "down" if not oper_up else ("error" if has_errors else "up")
 
         edges.append({
             "id": f"conn_{conn.id}",
@@ -449,6 +521,9 @@ def _build_topology(db: Session, request: Request = None) -> Dict[str, Any]:
             "dest_anchor": _normalize_anchor(conn.dest_anchor),
             "edge_offset": _normalize_edge_offset(conn.edge_offset),
             "edge_label_offset": _normalize_edge_offset(conn.edge_label_offset),
+            "edge_color": (
+                _normalize_edge_offset(conn.edge_offset) or {}
+            ).get("color", ""),
             # 实时速率（bps）
             "src_out_bps": src_out,
             "src_in_bps": src_in,
@@ -458,6 +533,12 @@ def _build_topology(db: Session, request: Request = None) -> Dict[str, Any]:
             "utilization": utilization,
             "max_bps": max_flow,
             "oper_up": oper_up,
+            "interface_status": interface_status,
+            "source_oper_status": source_status,
+            "dest_oper_status": dest_status,
+            "source_errors": source_errors,
+            "dest_errors": dest_errors,
+            "has_errors": has_errors,
             "updated_at": (
                 max(
                     [i.updated_at for i in (src_if, dst_if) if i is not None and i.updated_at],
@@ -502,8 +583,22 @@ def _build_topology(db: Session, request: Request = None) -> Dict[str, Any]:
         }
         for node in cloud_nodes_raw
     ]
-    cloud_links = [
-        {
+    cloud_links = []
+    for link in cloud_links_raw:
+        source_is_cloud = str(link["source"]).startswith("cloud_")
+        device_endpoint = link["target"] if source_is_cloud else link["source"]
+        interface_name = link["target_interface"] if source_is_cloud else link["source_interface"]
+        try:
+            device_id = int(str(device_endpoint).replace("device_", ""))
+        except (TypeError, ValueError):
+            device_id = None
+        iface = iface_cache.get(device_id, {}).get(interface_name or "") if device_id else None
+        capacity = float(iface.if_speed) if iface and iface.if_speed else None
+        in_bps = float(iface.in_bps) if iface and iface.in_bps is not None else None
+        out_bps = float(iface.out_bps) if iface and iface.out_bps is not None else None
+        max_flow = max([v for v in (in_bps, out_bps) if v is not None], default=None)
+        utilization = round(max_flow / capacity * 100, 1) if max_flow and capacity else None
+        cloud_links.append({
             "id": f"cloudlink_{link['id']}",
             "cloud_link_id": link["id"],
             "connection_id": None,
@@ -513,18 +608,30 @@ def _build_topology(db: Session, request: Request = None) -> Dict[str, Any]:
             "target_interface": link["target_interface"],
             "is_cloud_link": True,
             "cloud_link": True,
-            "oper_up": None,
-            "capacity_bps": None,
-            "utilization": None,
-            "max_bps": None,
-            "src_out_bps": None,
-            "src_in_bps": None,
-            "dst_out_bps": None,
-            "dst_in_bps": None,
-            "updated_at": None,
-        }
-        for link in cloud_links_raw
-    ]
+            "edge_offset": link.get("edge_offset"),
+            "edge_label_offset": link.get("edge_label_offset"),
+            "source_anchor": link.get("source_anchor"),
+            "dest_anchor": link.get("dest_anchor"),
+            "color": link.get("color", ""),
+            # 云出口用设备侧接口流量代表该出口的上下行
+            "oper_up": (iface.if_oper_status or "up") == "up" if iface else None,
+            "interface_status": (
+                "unknown" if not iface
+                else ("down" if (iface.if_oper_status or "up") != "up"
+                      else ("error" if (int(iface.in_errors or 0) + int(iface.out_errors or 0)) > 0 else "up"))
+            ),
+            "source_errors": int(iface.in_errors or 0) if iface else 0,
+            "dest_errors": int(iface.out_errors or 0) if iface else 0,
+            "has_errors": bool(iface and (int(iface.in_errors or 0) + int(iface.out_errors or 0)) > 0),
+            "capacity_bps": capacity,
+            "utilization": utilization,
+            "max_bps": max_flow,
+            "src_out_bps": out_bps if not source_is_cloud else None,
+            "src_in_bps": in_bps if not source_is_cloud else None,
+            "dst_out_bps": out_bps if source_is_cloud else None,
+            "dst_in_bps": in_bps if source_is_cloud else None,
+            "updated_at": iface.updated_at.isoformat() if iface and iface.updated_at else None,
+        })
 
     return {
         "nodes": nodes,
@@ -653,8 +760,19 @@ def save_topology_layout(payload: dict, db: Session = Depends(get_db)):
         offset = _normalize_edge_offset({
             "x": item.get("offset_x", 0),
             "y": item.get("offset_y", 0),
+            "points": item.get("offset_points") or [],
         })
-        conn.edge_offset = None if not offset or (abs(offset["x"]) < 0.01 and abs(offset["y"]) < 0.01) else offset
+        edge_color = _normalize_color(item.get("edge_color"))
+        if edge_color:
+            offset = offset or {"x": 0, "y": 0}
+            offset["color"] = edge_color
+        has_control_points = bool(offset and isinstance(offset.get("points"), list) and offset.get("points"))
+        conn.edge_offset = None if not offset or (
+            abs(offset.get("x", 0)) < 0.01
+            and abs(offset.get("y", 0)) < 0.01
+            and not offset.get("color")
+            and not has_control_points
+        ) else offset
         label_offset = _normalize_edge_offset({
             "x": item.get("label_offset_x", 0),
             "y": item.get("label_offset_y", 0),
@@ -760,6 +878,40 @@ def add_connection(payload: ConnectionCreate, db: Session = Depends(get_db)):
     db.refresh(conn)
     invalidate_topology()
     return {"id": conn.id, "message": "连接已添加"}
+
+
+@router.put("/connection/{conn_id}")
+def update_connection(conn_id: int, payload: ConnectionCreate, db: Session = Depends(get_db)):
+    """修改已有设备连接的源/目的设备、接口和锚点。"""
+    conn = db.query(DeviceConnection).filter(DeviceConnection.id == conn_id).first()
+    if not conn:
+        raise HTTPException(status_code=404, detail="连接不存在")
+    src = db.query(Device).filter(Device.id == payload.source_device_id).first()
+    dst = db.query(Device).filter(Device.id == payload.dest_device_id).first()
+    if not src or not dst:
+        raise HTTPException(status_code=404, detail="源设备或目的设备不存在")
+    if src.id == dst.id:
+        raise HTTPException(status_code=400, detail="不能连接设备自身")
+    exists = db.query(DeviceConnection).filter(
+        DeviceConnection.id != conn_id,
+        DeviceConnection.source_device_id == payload.source_device_id,
+        DeviceConnection.dest_device_id == payload.dest_device_id,
+        DeviceConnection.source_interface == (payload.source_interface or ""),
+        DeviceConnection.dest_interface == (payload.dest_interface or ""),
+    ).first()
+    if exists:
+        raise HTTPException(status_code=400, detail="该连接已存在")
+    conn.source_device_id = payload.source_device_id
+    conn.source_interface = payload.source_interface or ""
+    conn.dest_device_id = payload.dest_device_id
+    conn.dest_interface = payload.dest_interface or ""
+    if payload.source_anchor is not None:
+        conn.source_anchor = _normalize_anchor(payload.source_anchor)
+    if payload.dest_anchor is not None:
+        conn.dest_anchor = _normalize_anchor(payload.dest_anchor)
+    db.commit()
+    invalidate_topology()
+    return {"id": conn.id, "message": "连接参数已更新"}
 
 
 @router.delete("/connection/{conn_id}")

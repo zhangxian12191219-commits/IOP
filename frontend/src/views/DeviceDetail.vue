@@ -132,28 +132,6 @@
         </template>
       </el-row>
 
-      <div v-if="hasMetricsDevice" class="hardware-strip">
-        <div class="hardware-item" :class="metricAlertClass('disk_usage')">
-          <div class="hardware-label">磁盘容量</div>
-          <div class="hardware-value">{{ hardwareInfo.diskCapacity }}</div>
-          <div class="hardware-sub">{{ hardwareInfo.diskUsage }}</div>
-        </div>
-        <div class="hardware-item" :class="metricAlertClass('fan_speed')">
-          <div class="hardware-label">风扇转速</div>
-          <div class="hardware-value">{{ hardwareInfo.fanSpeed }}</div>
-          <div class="hardware-sub">{{ hardwareInfo.fanSub }}</div>
-        </div>
-        <div class="hardware-item" :class="metricAlertClass('power')">
-          <div class="hardware-label">电源信息</div>
-          <div class="hardware-value">{{ hardwareInfo.powerLabel }}</div>
-          <div class="hardware-sub">{{ hardwareInfo.powerSub }}</div>
-        </div>
-        <div class="hardware-item hardware-note">
-          <div class="hardware-label">数据来源</div>
-          <div class="hardware-sub">SNMP 实时采集；设备或型号不支持的项目显示“未采集”，可在 MIB 管理中补充厂商私有 OID。</div>
-        </div>
-      </div>
-
       <!-- 时间范围筛选：作用于历史曲线、告警与维保记录 -->
       <div v-if="['alerts', 'maintenance', 'custom'].includes(activeTab)" class="time-filter">
         <span class="time-filter-label">{{ t('device.timeRange') }}</span>
@@ -289,11 +267,75 @@
           <el-descriptions-item :label="t('device.maintenanceContact')">{{ device?.maintenance_contact || '-' }}</el-descriptions-item>
           <el-descriptions-item :label="t('device.maintenancePhone')">{{ device?.maintenance_phone || '-' }}</el-descriptions-item>
           </el-descriptions>
+        </el-tab-pane>
+
+        <el-tab-pane v-if="hasMetricsDevice" label="CPU" name="cpu">
+          <div class="time-filter">
+            <span class="time-filter-label">{{ t('device.timeRange') }}</span>
+            <el-button-group>
+              <el-button v-for="item in TIME_PRESETS" :key="item.value" size="small" :type="isChartPresetActive('cpu', item.value) ? 'primary' : 'default'" @click="setChartPreset('cpu', item.value)">{{ t(item.labelKey) }}</el-button>
+            </el-button-group>
+            <el-date-picker v-model="chartRanges.cpu.custom" type="datetimerange" size="small" :start-placeholder="t('device.startTime')" :end-placeholder="t('device.endTime')" :clearable="true" style="width: 320px" @change="onChartCustomRangeChange('cpu', $event)" />
+            <el-button size="small" @click="resetChartRange('cpu')">{{ t('device.resetRange') }}</el-button>
+            <el-tag v-if="chartRanges.cpu.mode === 'custom'" size="small" type="warning" effect="plain">{{ chartRangeText('cpu') }}</el-tag>
+          </div>
+          <div ref="cpuChartRef" class="chart"></div>
+        </el-tab-pane>
+
+        <el-tab-pane v-if="hasMetricsDevice" :label="t('device.memory')" name="memory">
+          <div class="time-filter">
+            <span class="time-filter-label">{{ t('device.timeRange') }}</span>
+            <el-button-group>
+              <el-button v-for="item in TIME_PRESETS" :key="item.value" size="small" :type="isChartPresetActive('memory', item.value) ? 'primary' : 'default'" @click="setChartPreset('memory', item.value)">{{ t(item.labelKey) }}</el-button>
+            </el-button-group>
+            <el-date-picker v-model="chartRanges.memory.custom" type="datetimerange" size="small" :start-placeholder="t('device.startTime')" :end-placeholder="t('device.endTime')" :clearable="true" style="width: 320px" @change="onChartCustomRangeChange('memory', $event)" />
+            <el-button size="small" @click="resetChartRange('memory')">{{ t('device.resetRange') }}</el-button>
+            <el-tag v-if="chartRanges.memory.mode === 'custom'" size="small" type="warning" effect="plain">{{ chartRangeText('memory') }}</el-tag>
+          </div>
+          <div ref="memoryChartRef" class="chart"></div>
+        </el-tab-pane>
+
+        <el-tab-pane v-if="hasMetricsDevice" :label="t('device.maxTemperature')" name="temperature">
+          <div class="time-filter">
+            <span class="time-filter-label">{{ t('device.timeRange') }}</span>
+            <el-button-group>
+              <el-button v-for="item in TIME_PRESETS" :key="item.value" size="small" :type="isChartPresetActive('temperature', item.value) ? 'primary' : 'default'" @click="setChartPreset('temperature', item.value)">{{ t(item.labelKey) }}</el-button>
+            </el-button-group>
+            <el-date-picker v-model="chartRanges.temperature.custom" type="datetimerange" size="small" :start-placeholder="t('device.startTime')" :end-placeholder="t('device.endTime')" :clearable="true" style="width: 320px" @change="onChartCustomRangeChange('temperature', $event)" />
+            <el-button size="small" @click="resetChartRange('temperature')">{{ t('device.resetRange') }}</el-button>
+            <el-tag v-if="chartRanges.temperature.mode === 'custom'" size="small" type="warning" effect="plain">{{ chartRangeText('temperature') }}</el-tag>
+          </div>
+          <div ref="tempChartRef" class="chart"></div>
+        </el-tab-pane>
+
+        <el-tab-pane v-if="hasMetricsDevice" label="硬件信息" name="hardware">
+      <div v-if="hasMetricsDevice" class="hardware-strip">
+        <div class="hardware-item" :class="metricAlertClass('disk_usage')">
+          <div class="hardware-label">磁盘容量</div>
+          <div class="hardware-value">{{ hardwareInfo.diskCapacity }}</div>
+          <div class="hardware-sub">{{ hardwareInfo.diskUsage }}</div>
+        </div>
+        <div class="hardware-item" :class="metricAlertClass('fan_speed')">
+          <div class="hardware-label">风扇转速</div>
+          <div class="hardware-value">{{ hardwareInfo.fanSpeed }}</div>
+          <div class="hardware-sub">{{ hardwareInfo.fanSub }}</div>
+        </div>
+        <div class="hardware-item" :class="metricAlertClass('power')">
+          <div class="hardware-label">电源信息</div>
+          <div class="hardware-value">{{ hardwareInfo.powerLabel }}</div>
+          <div class="hardware-sub">{{ hardwareInfo.powerSub }}</div>
+        </div>
+        <div class="hardware-item hardware-note">
+          <div class="hardware-label">数据来源</div>
+          <div class="hardware-sub">SNMP 实时采集；设备或型号不支持的项目显示“未采集”，可在 MIB 管理中补充厂商私有 OID。</div>
+        </div>
+      </div>
+
         <div v-if="hasMetricsDevice && hasServerComponents" class="server-components-panel">
           <div class="server-components-head">
             <div>
-              <strong>服务器组件明细</strong>
-              <span>按实体组件分别展示，不把 CPU、主板、进风、排风温度混成一个值</span>
+              <strong>硬件组件明细</strong>
+              <span>按实体组件展示电源、风扇、硬盘、温度等硬件状态</span>
             </div>
             <el-tag size="small" type="info" effect="plain">{{ serverComponents.vendor || 'SNMP' }}</el-tag>
           </div>
@@ -360,45 +402,6 @@
 
         </el-tab-pane>
 
-        <el-tab-pane v-if="hasMetricsDevice" label="CPU" name="cpu">
-          <div class="time-filter">
-            <span class="time-filter-label">{{ t('device.timeRange') }}</span>
-            <el-button-group>
-              <el-button v-for="item in TIME_PRESETS" :key="item.value" size="small" :type="isChartPresetActive('cpu', item.value) ? 'primary' : 'default'" @click="setChartPreset('cpu', item.value)">{{ t(item.labelKey) }}</el-button>
-            </el-button-group>
-            <el-date-picker v-model="chartRanges.cpu.custom" type="datetimerange" size="small" :start-placeholder="t('device.startTime')" :end-placeholder="t('device.endTime')" :clearable="true" style="width: 320px" @change="onChartCustomRangeChange('cpu', $event)" />
-            <el-button size="small" @click="resetChartRange('cpu')">{{ t('device.resetRange') }}</el-button>
-            <el-tag v-if="chartRanges.cpu.mode === 'custom'" size="small" type="warning" effect="plain">{{ chartRangeText('cpu') }}</el-tag>
-          </div>
-          <div ref="cpuChartRef" class="chart"></div>
-        </el-tab-pane>
-
-        <el-tab-pane v-if="hasMetricsDevice" :label="t('device.memory')" name="memory">
-          <div class="time-filter">
-            <span class="time-filter-label">{{ t('device.timeRange') }}</span>
-            <el-button-group>
-              <el-button v-for="item in TIME_PRESETS" :key="item.value" size="small" :type="isChartPresetActive('memory', item.value) ? 'primary' : 'default'" @click="setChartPreset('memory', item.value)">{{ t(item.labelKey) }}</el-button>
-            </el-button-group>
-            <el-date-picker v-model="chartRanges.memory.custom" type="datetimerange" size="small" :start-placeholder="t('device.startTime')" :end-placeholder="t('device.endTime')" :clearable="true" style="width: 320px" @change="onChartCustomRangeChange('memory', $event)" />
-            <el-button size="small" @click="resetChartRange('memory')">{{ t('device.resetRange') }}</el-button>
-            <el-tag v-if="chartRanges.memory.mode === 'custom'" size="small" type="warning" effect="plain">{{ chartRangeText('memory') }}</el-tag>
-          </div>
-          <div ref="memoryChartRef" class="chart"></div>
-        </el-tab-pane>
-
-        <el-tab-pane v-if="hasMetricsDevice" :label="t('device.maxTemperature')" name="temperature">
-          <div class="time-filter">
-            <span class="time-filter-label">{{ t('device.timeRange') }}</span>
-            <el-button-group>
-              <el-button v-for="item in TIME_PRESETS" :key="item.value" size="small" :type="isChartPresetActive('temperature', item.value) ? 'primary' : 'default'" @click="setChartPreset('temperature', item.value)">{{ t(item.labelKey) }}</el-button>
-            </el-button-group>
-            <el-date-picker v-model="chartRanges.temperature.custom" type="datetimerange" size="small" :start-placeholder="t('device.startTime')" :end-placeholder="t('device.endTime')" :clearable="true" style="width: 320px" @change="onChartCustomRangeChange('temperature', $event)" />
-            <el-button size="small" @click="resetChartRange('temperature')">{{ t('device.resetRange') }}</el-button>
-            <el-tag v-if="chartRanges.temperature.mode === 'custom'" size="small" type="warning" effect="plain">{{ chartRangeText('temperature') }}</el-tag>
-          </div>
-          <div ref="tempChartRef" class="chart"></div>
-        </el-tab-pane>
-
         <el-tab-pane v-if="hasMetricsDevice" :label="t('device.customMetrics')" name="custom">
           <div class="custom-metric-toolbar">
             <div>
@@ -451,7 +454,18 @@
           </template>
         </el-tab-pane>
 
-        <el-tab-pane v-if="isSnmpDevice" :label="t('device.interfacesTraffic')" name="interfaces">
+        <el-tab-pane v-if="isSnmpDevice || isApiDevice" :label="t('device.interfacesTraffic')" name="interfaces">
+          <el-alert
+            v-if="isApiDevice && !interfaces.length"
+            type="info"
+            :closable="false"
+            show-icon
+            title="正在通过设备 API 获取接口信息"
+            description="API 设备通常只提供端口状态、速率和描述；流量计数取决于厂商 API 是否返回端口统计。"
+            style="margin-bottom: 12px"
+          >
+            <el-button size="small" type="primary" plain :loading="apiIfLoading" @click="loadApiInterfaces">立即获取接口</el-button>
+          </el-alert>
           <!-- 概览 -->
           <div class="if-summary">
             <div class="if-stat">
@@ -604,8 +618,24 @@
           </div>
         </el-tab-pane>
 
+        <el-tab-pane v-if="isIpmiDevice" :label="t('device.interfacesTraffic')" name="interfaces">
+          <el-empty description="IPMI 协议不提供主机网卡和接口流量数据">
+            <p style="max-width: 520px; color: #8a9bab; line-height: 1.8">
+              IPMI 只能读取 BMC 传感器、电源、温度和 SEL 事件，无法获取操作系统网卡、端口速率或流量计数。
+              如需接口与流量，请为该设备配置 SNMP 或 API 接入。
+            </p>
+          </el-empty>
+        </el-tab-pane>
+
         <el-tab-pane label="当前告警" name="alerts">
-          <el-table :data="filteredAlerts" stripe style="width: 100%">
+          <el-table
+            :data="currentAlerts"
+            stripe
+            size="small"
+            max-height="calc(100vh - 420px)"
+            class="device-alert-table"
+            style="width: 100%"
+          >
             <el-table-column :label="t('device.level')" width="90">
               <template #default="{ row }">
                 <el-tag :type="alertLevelType(row.alert_level)" size="small" effect="dark">
@@ -626,7 +656,7 @@
               </template>
             </el-table-column>
           </el-table>
-          <el-empty v-if="filteredAlerts.length === 0" :description="t('device.noDataInRange')" />
+          <el-empty v-if="currentAlerts.length === 0" :description="t('device.noDataInRange')" />
         </el-tab-pane>
         <el-tab-pane label="当前告警指标" name="current-metrics">
           <div class="current-metrics-panel">
@@ -1138,6 +1168,21 @@ function interfaceSortValue(row) {
 }
 
 // 接口概览与筛选排序
+const apiIfLoading = ref(false)
+
+async function loadApiInterfaces() {
+  if (!isApiDevice.value) return
+  apiIfLoading.value = true
+  try {
+    const res = await monitorApi.getDeviceInterfaces(route.params.id, true)
+    interfaces.value = Array.isArray(res.data) ? res.data : []
+  } catch (e) {
+    ElMessage.error(e?.response?.data?.detail || e.message || '获取 API 接口失败')
+  } finally {
+    apiIfLoading.value = false
+  }
+}
+
 const ifSummary = computed(() => {
   const total = interfaces.value.length
   const up = interfaces.value.filter((i) => i.oper_status === 'up').length
@@ -1504,7 +1549,7 @@ const currentDashboardMetrics = computed(() => {
 function refreshDashboardMetrics() {
   dashboardMetricsConfig.value = readDashboardMetricsConfig()
 }
-const TABS = ['info', 'cpu', 'memory', 'temperature', 'interfaces', 'alerts', 'current-metrics', 'rules', 'maintenance', 'custom']
+const TABS = ['info', 'hardware', 'cpu', 'memory', 'temperature', 'interfaces', 'alerts', 'current-metrics', 'rules', 'maintenance', 'custom']
 const activeTab = ref(
   TABS.includes(String(route.query.tab || '')) ? String(route.query.tab) : 'info'
 )
@@ -1614,6 +1659,9 @@ function parseServerTime(value) {
   const date = new Date(text)
   return Number.isNaN(date.getTime()) ? null : date
 }
+
+// “当前告警”展示所有未恢复告警，不按时间范围过滤；时间筛选只用于历史类页签。
+const currentAlerts = computed(() => activeAlerts.value || [])
 
 const filteredAlerts = computed(() => {
   const [start, end] = getRangeBounds()
@@ -2286,6 +2334,12 @@ function goSibling(step) {
 }
 
 // /devices/:id 复用同一组件实例，参数变化时不会重新 mount，需要手动刷新详情数据
+watch(activeTab, (tab) => {
+  if (tab === 'interfaces' && isApiDevice.value && !interfaces.value.length) {
+    loadApiInterfaces()
+  }
+})
+
 watch(
   () => route.params.id,
   async (id, oldId) => {
@@ -2306,6 +2360,9 @@ watch(
 
 onMounted(async () => {
   await Promise.all([refreshAll(), syncNavForRoute()])
+  if (activeTab.value === 'interfaces' && isApiDevice.value && !interfaces.value.length) {
+    loadApiInterfaces()
+  }
   timer = setInterval(refreshAll, refreshMs())
 })
 
@@ -2470,6 +2527,29 @@ window.addEventListener('resize', () => {
   margin-bottom: 16px;
 }
 
+.device-alert-table {
+  width: 100%;
+}
+.device-alert-table :deep(.el-table__body-wrapper) {
+  max-height: calc(100vh - 470px);
+}
+@media (max-width: 900px) {
+  .device-alert-table :deep(.el-table__body-wrapper) {
+    max-height: calc(100vh - 520px);
+  }
+}
+.hardware-inline-tags {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: 8px;
+  flex-wrap: wrap;
+}
+.hardware-inline-tags :deep(.el-tag) {
+  height: 20px;
+  font-size: 10px;
+  padding: 0 6px;
+}
 .hardware-strip {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));

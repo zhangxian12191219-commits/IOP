@@ -104,7 +104,25 @@ def cabinet_to_dict(db: Session, cabinet: Cabinet, with_devices: bool = True) ->
     }
     if with_devices:
         devices = []
-        for device in cabinet_devices(db, cabinet.id):
+        cabinet_devices_list = cabinet_devices(db, cabinet.id)
+        alert_counts: Dict[int, Dict[str, Any]] = {}
+        if cabinet_devices_list:
+            alert_rows = (
+                db.query(Alert.device_id, Alert.alert_level)
+                .filter(
+                    Alert.device_id.in_([d.id for d in cabinet_devices_list]),
+                    Alert.resolved_at.is_(None),
+                    Alert.is_hidden.isnot(True),
+                )
+                .all()
+            )
+            level_rank = {"info": 1, "warning": 2, "critical": 3, "emergency": 4}
+            for alert_device_id, alert_level in alert_rows:
+                item = alert_counts.setdefault(alert_device_id, {"count": 0, "level": ""})
+                item["count"] += 1
+                if level_rank.get(alert_level or "", 0) >= level_rank.get(item["level"] or "", 0):
+                    item["level"] = alert_level or ""
+        for device in cabinet_devices_list:
             metric = latest_metric(db, device.id)
             devices.append({
                 "id": device.id,
@@ -120,6 +138,8 @@ def cabinet_to_dict(db: Session, cabinet: Cabinet, with_devices: bool = True) ->
                 "memory_usage": metric.memory_usage if metric else None,
                 "temperature": metric.temperature if metric else None,
                 "power_status": metric.power_status if metric else None,
+                "alert_count": int(alert_counts.get(device.id, {}).get("count", 0)),
+                "alert_level": alert_counts.get(device.id, {}).get("level", ""),
             })
         data["devices"] = devices
     return data

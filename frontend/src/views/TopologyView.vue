@@ -55,6 +55,9 @@
               :inactive-text="t('topology.hide')"
               @change="applyTrafficVisibility"
             />
+            <el-button size="small" @click="toggleAlertSound">
+              <el-icon><Bell /></el-icon>{{ alertSoundEnabled ? '声音开' : '声音关' }}
+            </el-button>
             <el-tooltip :content="t('topology.autoRefreshHint')" placement="bottom">
               <div class="topo-auto-refresh">
                 <el-switch v-model="autoRefresh" size="small" />
@@ -130,9 +133,6 @@
             <el-button size="small" @click="openAddConnection">
               <el-icon><Plus /></el-icon>{{ t('topology.addConnection') }}
             </el-button>
-            <el-button type="success" size="small" @click="autoDiscover" :loading="discovering">
-              <el-icon><Search /></el-icon>{{ t('topology.autoDiscoverLldp') }}
-            </el-button>
             <el-button
               type="primary"
               size="small"
@@ -151,6 +151,9 @@
             </el-button>
             <el-button size="small" :loading="savingLayout" @click="resetLayout">
               <el-icon><RefreshLeft /></el-icon>{{ t('topology.resetLayout') }}
+            </el-button>
+            <el-button type="success" size="small" @click="autoDiscover" :loading="discovering">
+              <el-icon><Search /></el-icon>{{ t('topology.autoDiscoverLldp') }}
             </el-button>
           </template>
           </div>
@@ -172,8 +175,8 @@
         show-icon
         class="edit-hint"
         :title="editTool === 'connect'
-          ? '拖拽连线模式：按住源设备拖到目标设备，松开后自动吸附并弹出两端接口选择；双击连线可删除（需二次确认）；「添加云出口」可创建不关联资产的虚拟节点，拖到真实设备可建出口链路；切换「移动布局」可拖动节点。'
-          : '移动布局模式：拖动节点调整位置，拖动选中设备可整组移动；双击连线不会删除，删除连线请使用链路详情中的「删除连线」按钮。「添加云出口」可创建虚拟云节点，选中后可添加出口链路或删除云节点。全选或 Ctrl 多选后，拖动任一选中设备可整组移动；智能布线会自动选择面向对端的锚点和最短路径，拖拽连线时实时推荐最近设备与最佳锚点。拖动已有连线的任意端点可重新吸附到其他设备，画布会自动展开所有设备锚点；按住线身可微调路径，拖动上传/下载标签组可沿当前连线移动并以「标签」调整字号，调整后点击「保存布局」。'"
+          ? '拖拽连线模式：按住源设备拖到目标设备，松开后自动吸附并弹出两端接口选择；双击连线可修改连接参数，删除请在链路详情中操作；「添加云出口」可创建不关联资产的虚拟节点，拖到真实设备可建出口链路；切换「移动布局」可拖动节点。'
+          : '移动布局模式：拖动节点调整位置，拖动选中设备可整组移动；双击连线可修改连接参数，删除连线请使用链路详情中的「删除连线」按钮。「添加云出口」可创建虚拟云节点，选中后可添加出口链路或删除云节点。全选或 Ctrl 多选后，拖动任一选中设备可整组移动；智能布线会自动选择面向对端的锚点和最短路径，拖拽连线时实时推荐最近设备与最佳锚点。拖动已有连线的任意端点可重新吸附到其他设备，画布会自动展开所有设备锚点；按住线身可微调路径，拖动上传/下载标签组可沿当前连线移动并以「标签」调整字号；拖动连线左半段/右半段可分别调整两端角度，调整后点击「保存布局」。'"
       />
 
       <div
@@ -203,6 +206,36 @@
 
       <div class="topology-stage">
         <div ref="containerRef" class="topology-container"></div>
+        <div
+          v-if="canvasScroll.xVisible"
+          class="topo-canvas-scroll topo-canvas-scroll-x"
+          @mousedown.stop.prevent="startCanvasScroll('x', $event)"
+        >
+          <div
+            class="topo-canvas-scroll-thumb"
+            :style="{ width: `${canvasScroll.xThumb}px`, transform: `translateX(${canvasScroll.xLeft}px)` }"
+          ></div>
+        </div>
+        <div
+          v-if="canvasScroll.yVisible"
+          class="topo-canvas-scroll topo-canvas-scroll-y"
+          @mousedown.stop.prevent="startCanvasScroll('y', $event)"
+        >
+          <div
+            class="topo-canvas-scroll-thumb"
+            :style="{ height: `${canvasScroll.yThumb}px`, transform: `translateY(${canvasScroll.yLeft}px)` }"
+          ></div>
+        </div>
+        <div
+          v-if="regionSelect"
+          class="topo-region-select"
+          :style="regionSelectStyle"
+        ></div>
+        <div v-if="regionSelecting || regionArmed" class="topo-region-hint">
+          {{ regionSelecting
+            ? '正在框选：松开鼠标完成 · 按住 Ctrl 追加选择 · Esc 取消'
+            : '已准备框选：按住左键拖动选择区域，松开完成 · Esc 取消' }}
+        </div>
 
         <div v-if="largeOverview" class="topo-scale-overview">
           <div class="topo-scale-overview-head">
@@ -359,6 +392,16 @@
           <span>{{ selectedEdge.is_cloud_link ? '云出口链路' : t('topology.linkDetails') }}</span>
           <el-button link @click="selectedEdge = null"><el-icon><Close /></el-icon></el-button>
         </div>
+        <div class="edge-row">
+          <span class="k">连线颜色</span>
+          <span class="v">
+            <el-color-picker
+              v-model="edgeColorValue"
+              size="small"
+              @change="onEdgeColorChange"
+            />
+          </span>
+        </div>
         <template v-if="selectedEdge.is_cloud_link">
           <div class="edge-row">
             <span class="k">云节点</span>
@@ -375,6 +418,21 @@
           <div class="edge-row">
             <span class="k">链路类型</span>
             <span class="v">拓扑虚拟链路（不写入设备连接）</span>
+          </div>
+          <div class="edge-row">
+            <span class="k">实时速率</span>
+            <span class="v">
+              <span class="flow-upload">↑ {{ fmtBps(selectedEdgeFlow.upload) }} 上传</span>
+              <span class="flow-download">↓ {{ fmtBps(selectedEdgeFlow.download) }} 下载</span>
+            </span>
+          </div>
+          <div class="edge-row">
+            <span class="k">出口带宽</span>
+            <span class="v">{{ fmtBps(selectedEdge.capacity_bps) }}</span>
+          </div>
+          <div class="edge-row">
+            <span class="k">利用率</span>
+            <span class="v">{{ selectedEdge.utilization == null ? '-' : selectedEdge.utilization + '%' }}</span>
           </div>
         </template>
         <template v-else>
@@ -412,12 +470,20 @@
           </div>
         </template>
         <el-button
-          v-if="editMode && !selectedEdge.is_cloud_link && selectedEdge.edge_offset"
+          v-if="editMode && !selectedEdge.is_cloud_link && selectedEdge.edge_offset && (selectedEdge.edge_offset.x || selectedEdge.edge_offset.y)"
           size="small"
           plain
           class="edge-reset-btn"
           @click="resetEdgeOffset"
         >恢复自动路径</el-button>
+        <el-button
+          v-if="editMode && !selectedEdge.is_cloud_link"
+          type="primary"
+          plain
+          size="small"
+          class="edge-reset-btn"
+          @click="editSelectedEdge"
+        >修改连接参数</el-button>
         <el-button
           v-if="editMode"
           type="danger"
@@ -429,7 +495,7 @@
           <el-icon><Delete /></el-icon>{{ selectedEdge.is_cloud_link ? '删除出口链路' : '删除连线' }}
         </el-button>
         <div class="edge-tip">{{ selectedEdge.is_cloud_link ? '云出口链路由拓扑布局保存；点击「保存布局」持久化' : edgeDeleteHint }}</div>
-        <div v-if="editMode && !selectedEdge.is_cloud_link" class="edge-tip">按住连线拖动可微调路径；拖动上传/下载标签组可沿当前连线移动并以「标签」调整字号，调整后点击「保存布局」持久化</div>
+        <div v-if="editMode && !selectedEdge.is_cloud_link" class="edge-tip">拖动连线左半段/右半段可分别调整两端角度；拖动上传/下载标签组可沿当前连线移动并以「标签」调整字号，调整后点击「保存布局」持久化</div>
       </div>
 
       <div class="legend">
@@ -458,7 +524,7 @@
     </el-card>
 
     <!-- 添加连接 -->
-    <el-dialog v-model="dialogVisible" :title="t('topology.addDeviceLink')" width="560px">
+    <el-dialog v-model="dialogVisible" :title="editingConnectionId ? '修改设备连接' : t('topology.addDeviceLink')" width="560px">
       <el-form label-width="100px">
         <el-form-item :label="t('topology.sourceDevice')">
           <el-select
@@ -494,7 +560,16 @@
               :key="item.name"
               :label="interfaceOptionLabel(item)"
               :value="item.name"
-            />
+            >
+              <div class="interface-option-rich">
+                <span>{{ item.name }}</span>
+                <small v-if="item.description">{{ item.description }}</small>
+                <em v-if="item.oper_status || item.speed">
+                  {{ item.oper_status === 'up' ? 'UP' : 'DOWN' }}
+                  <template v-if="item.speed"> · {{ fmtBps(item.speed) }}</template>
+                </em>
+              </div>
+            </el-option>
           </el-select>
           <div v-if="noSourceInterfaces" class="if-hint">{{ t('topology.noInterfacesHint') }}</div>
         </el-form-item>
@@ -532,14 +607,23 @@
               :key="item.name"
               :label="interfaceOptionLabel(item)"
               :value="item.name"
-            />
+            >
+              <div class="interface-option-rich">
+                <span>{{ item.name }}</span>
+                <small v-if="item.description">{{ item.description }}</small>
+                <em v-if="item.oper_status || item.speed">
+                  {{ item.oper_status === 'up' ? 'UP' : 'DOWN' }}
+                  <template v-if="item.speed"> · {{ fmtBps(item.speed) }}</template>
+                </em>
+              </div>
+            </el-option>
           </el-select>
           <div v-if="noDestInterfaces" class="if-hint">{{ t('topology.noInterfacesHint') }}</div>
         </el-form-item>
       </el-form>
       <template #footer>
         <el-button @click="dialogVisible = false">{{ t('common.cancel') }}</el-button>
-        <el-button type="primary" @click="submitConnection">{{ t('topology.confirmAdd') }}</el-button>
+        <el-button type="primary" :loading="connectionSubmitting" @click="submitConnection">{{ editingConnectionId ? '保存修改' : t('topology.confirmAdd') }}</el-button>
       </template>
     </el-dialog>
 
@@ -584,7 +668,16 @@
               :key="item.name"
               :label="interfaceOptionLabel(item)"
               :value="item.name"
-            />
+            >
+              <div class="interface-option-rich">
+                <span>{{ item.name }}</span>
+                <small v-if="item.description">{{ item.description }}</small>
+                <em v-if="item.oper_status || item.speed">
+                  {{ item.oper_status === 'up' ? 'UP' : 'DOWN' }}
+                  <template v-if="item.speed"> · {{ fmtBps(item.speed) }}</template>
+                </em>
+              </div>
+            </el-option>
           </el-select>
           <div class="if-hint">接口可留空；链路只写入拓扑布局，不写入设备连接表</div>
         </el-form-item>
@@ -759,7 +852,7 @@
 <script setup>
 import { t } from '@/i18n'
 import { ref, reactive, computed, onMounted, onBeforeUnmount, watch } from 'vue'
-import { useRouter, useRoute } from 'vue-router'
+import { useRouter, useRoute, onBeforeRouteLeave } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Graph, Shape } from '@antv/x6'
 import { topologyApi, assetApi, sharingApi } from '@/api'
@@ -778,7 +871,40 @@ const fullscreenActive = computed(() => isFullscreen.value || pseudoFullscreen.v
 const loading = ref(false)
 const discovering = ref(false)
 const dialogVisible = ref(false)
+const connectionSubmitting = ref(false)
+const editingConnectionId = ref(null)
 const showTraffic = ref(true)
+const alertSoundEnabled = ref(localStorage.getItem('nms_topo_alert_sound') !== '0')
+let lastTopologyAlertCount = null
+let alertAudioCtx = null
+
+function toggleAlertSound() {
+  alertSoundEnabled.value = !alertSoundEnabled.value
+  localStorage.setItem('nms_topo_alert_sound', alertSoundEnabled.value ? '1' : '0')
+  if (alertSoundEnabled.value) playAlertSound()
+}
+
+function playAlertSound() {
+  try {
+    alertAudioCtx = alertAudioCtx || new (window.AudioContext || window.webkitAudioContext)()
+    const now = alertAudioCtx.currentTime
+    const osc = alertAudioCtx.createOscillator()
+    const gain = alertAudioCtx.createGain()
+    osc.type = 'sine'
+    osc.frequency.setValueAtTime(880, now)
+    osc.frequency.setValueAtTime(660, now + 0.14)
+    gain.gain.setValueAtTime(0.0001, now)
+    gain.gain.exponentialRampToValueAtTime(0.18, now + 0.02)
+    gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.32)
+    osc.connect(gain)
+    gain.connect(alertAudioCtx.destination)
+    osc.start(now)
+    osc.stop(now + 0.35)
+  } catch {
+    // 浏览器禁止自动播放时静默失败
+  }
+}
+
 const flowLabelPercent = ref(Math.max(60, Math.min(200, Number(localStorage.getItem('nms_topo_flow_label_scale')) || 100)))
 const flowLabelScale = computed(() => flowLabelPercent.value / 100)
 const autoRefresh = ref(true)
@@ -803,17 +929,46 @@ const canEditAssets = computed(() => can('assets:edit'))
 const editMode = computed(() => mode.value === 'edit' && canEdit.value)
 const modeShortHint = computed(() => (
   editTool.value === 'connect'
-    ? '编辑模式（拖拽连线）：拖动设备创建连接 · 添加云出口 · 双击连线删除需确认 · 完成后保存布局'
-    : '编辑模式（移动布局）：拖动节点调整位置 · 添加云出口 · 双击连线不会删除 · 完成后保存布局'
+    ? '编辑模式（拖拽连线）：拖动设备创建连接 · 添加云出口 · 双击连线修改参数 · 删除用链路详情 · 完成后保存布局'
+    : '编辑模式（移动布局）：拖动节点调整位置 · 添加云出口 · 双击连线修改参数 · 删除用链路详情 · 完成后保存布局'
 ))
 const edgeDeleteHint = computed(() => {
   if (!editMode.value) return '视图模式只读：切换到「编辑」后可调整连线'
-  if (editTool.value === 'connect') return '拖拽连线模式：双击连线可删除（需二次确认）'
-  return '移动布局模式：拖动节点不会删除连线；如需删除请使用下方「删除连线」按钮'
+  if (editTool.value === 'connect') return '拖拽连线模式：双击连线修改连接参数；删除请使用下方「删除连线」按钮'
+  return '移动布局模式：双击连线修改参数；如需删除请使用下方「删除连线」按钮'
 })
 const savingLayout = ref(false)
 const discardingLayout = ref(false)
 const dirty = ref(false)
+const regionSelect = ref(null)
+const regionSelecting = ref(false)
+const canvasScroll = reactive({
+  xVisible: false,
+  yVisible: false,
+  xThumb: 40,
+  yThumb: 40,
+  xLeft: 0,
+  yLeft: 0,
+  maxX: 0,
+  maxY: 0,
+})
+let canvasScrollDrag = null
+const CANVAS_SCROLL_PADDING = 60
+const regionArmed = ref(false)
+let regionSelectCleanup = null
+let regionArmTimer = null
+const regionSelectStyle = computed(() => {
+  const region = regionSelect.value
+  if (!region) return {}
+  return {
+    left: `${Math.min(region.startX, region.endX)}px`,
+    top: `${Math.min(region.startY, region.endY)}px`,
+    width: `${Math.abs(region.endX - region.startX)}px`,
+    height: `${Math.abs(region.endY - region.startY)}px`,
+  }
+})
+let autoSaveTimer = null
+let suppressBlankClickUntil = 0
 const deviceDialogVisible = ref(false)
 const deviceSaving = ref(false)
 const editingDeviceId = ref(null)
@@ -1049,6 +1204,16 @@ function nodeMatchesActiveGroup(node) {
 }
 
 function applyScaleView(fitAfter = false) {
+  // 重绘前先把画布上的最新坐标回写到节点模型，避免筛选/云节点操作把手动布局带回自动布局。
+  if (graph) {
+    graph.getNodes().forEach((cell) => {
+      const item = nodeModelForCell(cell)
+      if (!item) return
+      const position = cell.position()
+      item.x = Math.round(position.x)
+      item.y = Math.round(position.y)
+    })
+  }
   let visible = filteredNodes.value
   scaleTruncated.value = false
   if (largeMode.value && !editMode.value) {
@@ -1171,20 +1336,21 @@ function interfaceSideRefs(side) {
     : { target: destInterfaces, loading: destIfLoading }
 }
 
-function fetchDeviceInterfaces(deviceId) {
+function fetchDeviceInterfaces(deviceId, refresh = false) {
   const key = Number(deviceId)
-  const pending = interfaceRequests.get(key)
+  const requestKey = `${key}:${refresh ? 'refresh' : 'normal'}`
+  const pending = interfaceRequests.get(requestKey)
   if (pending) return pending
-  const request = topologyApi.getDeviceInterfaces(deviceId)
+  const request = topologyApi.getDeviceInterfaces(deviceId, refresh)
     .then((res) => {
       const items = res.data || []
-      interfaceCache.set(key, { items, at: Date.now() })
+      if (items.length) interfaceCache.set(key, { items, at: Date.now() })
       return items
     })
     .finally(() => {
-      if (interfaceRequests.get(key) === request) interfaceRequests.delete(key)
+      if (interfaceRequests.get(requestKey) === request) interfaceRequests.delete(requestKey)
     })
-  interfaceRequests.set(key, request)
+  interfaceRequests.set(requestKey, request)
   return request
 }
 
@@ -1218,7 +1384,11 @@ async function loadDeviceInterfaces(deviceId, side) {
   }
   loading.value = true
   try {
-    const items = await fetchDeviceInterfaces(deviceId)
+    let items = await fetchDeviceInterfaces(deviceId)
+    // 设备刚添加、后台采集未完成时数据库可能为空；立即触发一次实时采集。
+    if (!items.length && seq === interfaceLoadSeq[side]) {
+      items = await fetchDeviceInterfaces(deviceId, true)
+    }
     if (seq === interfaceLoadSeq[side]) target.value = items
   } catch {
     if (seq === interfaceLoadSeq[side] && !cached) target.value = []
@@ -1254,7 +1424,33 @@ function openConnectionDialog(sourceDeviceId = null, destDeviceId = null, source
 }
 
 function openAddConnection() {
+  editingConnectionId.value = null
   openConnectionDialog()
+}
+
+function openEditConnection(edge) {
+  const connectionId = edge?.getData()?.connectionId
+  if (!connectionId) return
+  const model = edges.value.find((item) => Number(item.connection_id) === Number(connectionId))
+  if (!model) return
+  editingConnectionId.value = Number(connectionId)
+  const sourceId = Number(edge.getSourceCell()?.getData()?.deviceId)
+    || Number(String(model.source || '').replace('device_', ''))
+  const destId = Number(edge.getTargetCell()?.getData()?.deviceId)
+    || Number(String(model.target || '').replace('device_', ''))
+  form.source_device_id = Number.isFinite(sourceId) && sourceId > 0 ? sourceId : null
+  form.source_interface = model.source_interface || ''
+  form.dest_device_id = Number.isFinite(destId) && destId > 0 ? destId : null
+  form.dest_interface = model.target_interface || ''
+  connectionAnchors.value = {
+    source: model.source_anchor || null,
+    dest: model.dest_anchor || null,
+  }
+  sourceInterfaces.value = []
+  destInterfaces.value = []
+  dialogVisible.value = true
+  if (form.source_device_id) loadDeviceInterfaces(form.source_device_id, 'source')
+  if (form.dest_device_id) loadDeviceInterfaces(form.dest_device_id, 'dest')
 }
 
 // 云出口链路（拓扑虚拟节点 ↔ 真实设备，不写 DeviceConnection）
@@ -1427,6 +1623,8 @@ function smartConnectCandidate(clientX, clientY, sourceNode) {
 function applyReattachCandidate(drag, candidate, clientX, clientY) {
   if (!drag || !candidate?.node || !graph) return false
   if (candidate.node.id === drag.fixedNode.id) return false
+  // 云出口链路允许在两端原节点内重新选择锚点，但不允许把任一端改接到其他节点。
+  if (drag.edge.getData()?.isCloudLink && candidate.node.id !== drag.originalNode.id) return false
   const snapped = nearestAnchor(candidate.node, candidate.el, clientX, clientY, 22)
   let anchor = snapped?.ratio || null
   if (!anchor) {
@@ -1757,22 +1955,47 @@ function startEdgeDrag(edge, event) {
   }
 
   const data = edge.getData() || {}
-  const midpoint = edgeMidpoint(edge)
-  const autoVertex = data.autoVertex && Number.isFinite(Number(data.autoVertex.x))
-    ? { x: Number(data.autoVertex.x), y: Number(data.autoVertex.y) }
-    : midpoint
-  const existing = data.edgeOffset && Number.isFinite(Number(data.edgeOffset.x))
-    ? { x: Number(data.edgeOffset.x), y: Number(data.edgeOffset.y) }
-    : { x: 0, y: 0 }
+  const sourceCell = edge.getSourceCell()
+  const targetCell = edge.getTargetCell()
+  const sourceBox = sourceCell?.getBBox?.()
+  const targetBox = targetCell?.getBBox?.()
+  const base = sourceBox && targetBox
+    ? {
+        x: (sourceBox.x + sourceBox.width / 2 + targetBox.x + targetBox.width / 2) / 2,
+        y: (sourceBox.y + sourceBox.height / 2 + targetBox.y + targetBox.height / 2) / 2,
+      }
+    : edgeMidpoint(edge)
+  let controls = []
+  if (Array.isArray(data.edgeOffset?.points) && data.edgeOffset.points.length >= 2) {
+    controls = data.edgeOffset.points.slice(0, 2).map((point) => ({
+      x: base.x + Number(point.x || 0),
+      y: base.y + Number(point.y || 0),
+    }))
+  } else {
+    const sourcePoint = endpoints.source
+    const targetPoint = endpoints.target
+    controls = [
+      { x: sourcePoint.x + (targetPoint.x - sourcePoint.x) / 3, y: sourcePoint.y + (targetPoint.y - sourcePoint.y) / 3 },
+      { x: sourcePoint.x + (targetPoint.x - sourcePoint.x) * 2 / 3, y: sourcePoint.y + (targetPoint.y - sourcePoint.y) * 2 / 3 },
+    ]
+  }
+  const controlIndex = Math.hypot(local.x - controls[0].x, local.y - controls[0].y)
+    <= Math.hypot(local.x - controls[1].x, local.y - controls[1].y) ? 0 : 1
   edgeDrag = {
-    mode: 'offset',
+    mode: 'multiOffset',
     edge,
     startX: local.x,
     startY: local.y,
-    baseX: autoVertex.x,
-    baseY: autoVertex.y,
-    baseOffset: existing,
-    offset: existing,
+    baseX: base.x,
+    baseY: base.y,
+    controls,
+    controlIndex,
+    startControl: { ...controls[controlIndex] },
+    offset: {
+      x: 0,
+      y: 0,
+      points: controls.map((point) => ({ x: point.x - base.x, y: point.y - base.y })),
+    },
     moved: false,
     zIndex: edge.getZIndex(),
   }
@@ -1813,15 +2036,25 @@ function onEdgeDragMove(event) {
     return
   }
 
-  const offset = {
-    x: Math.round((edgeDrag.baseOffset.x + dx) * 100) / 100,
-    y: Math.round((edgeDrag.baseOffset.y + dy) * 100) / 100,
+  if (edgeDrag.mode === 'multiOffset') {
+    const controls = edgeDrag.controls.map((point) => ({ ...point }))
+    const index = edgeDrag.controlIndex || 0
+    controls[index] = {
+      x: edgeDrag.startControl.x + dx,
+      y: edgeDrag.startControl.y + dy,
+    }
+    edgeDrag.controls = controls
+    edgeDrag.offset = {
+      x: 0,
+      y: 0,
+      points: controls.map((point) => ({
+        x: Math.round((point.x - edgeDrag.baseX) * 100) / 100,
+        y: Math.round((point.y - edgeDrag.baseY) * 100) / 100,
+      })),
+    }
+    edgeDrag.edge.setVertices(controls)
+    return
   }
-  edgeDrag.offset = offset
-  edgeDrag.edge.setVertices([{
-    x: edgeDrag.baseX + offset.x,
-    y: edgeDrag.baseY + offset.y,
-  }])
 }
 
 function cleanupEdgeDrag() {
@@ -1869,11 +2102,18 @@ function onEdgeDragEnd(event) {
         ...(isSource ? { sourceAnchor: anchor } : { destAnchor: anchor }),
       }
       drag.edge.setData(nextData)
+      const cloudLink = data.cloudLinkId
+        ? cloudLinks.value.find((link) => Number(link.cloud_link_id) === Number(data.cloudLinkId))
+        : null
+      if (cloudLink) {
+        if (isSource) cloudLink.source_anchor = anchor
+        else cloudLink.dest_anchor = anchor
+      }
       if (item) {
         if (isSource) item.source_anchor = anchor
         else item.dest_anchor = anchor
       }
-      if (selectedEdge.value && selectedEdge.value.connection_id === connId) {
+      if (selectedEdge.value && (selectedEdge.value.connection_id === connId || selectedEdge.value.id === drag.edge.id)) {
         selectedEdge.value = {
           ...selectedEdge.value,
           ...(isSource ? { source_anchor: anchor } : { dest_anchor: anchor }),
@@ -1924,12 +2164,14 @@ function onEdgeDragEnd(event) {
     return
   }
 
+  const data = drag.edge.getData() || {}
+  const cloudLink = data.cloudLinkId
+    ? cloudLinks.value.find((link) => Number(link.cloud_link_id) === Number(data.cloudLinkId))
+    : null
+  if (cloudLink) cloudLink.edge_offset = { ...drag.offset }
   if (item) item.edge_offset = { ...drag.offset }
-  drag.edge.setData({
-    ...(drag.edge.getData() || {}),
-    edgeOffset: { ...drag.offset },
-  })
-  if (selectedEdge.value && selectedEdge.value.connection_id === connId) {
+  drag.edge.setData({ ...data, edgeOffset: { ...drag.offset } })
+  if (selectedEdge.value && (selectedEdge.value.connection_id === connId || selectedEdge.value.id === drag.edge.id)) {
     selectedEdge.value = { ...selectedEdge.value, edge_offset: { ...drag.offset } }
   }
   dirty.value = true
@@ -2167,6 +2409,13 @@ const TYPE_COLORS = {
   server: '#fbbf24',
   cloud: '#0ea5e9',
 }
+const ALERT_LEVEL_COLORS = {
+  info: '#38bdf8',
+  warning: '#fbbf24',
+  critical: '#fb7185',
+  emergency: '#ef4444',
+}
+
 const STATUS_COLORS = {
   online: '#22c55e',
   warning: '#f59e0b',
@@ -2396,9 +2645,13 @@ function initGraph() {
 
   graph.on('scale', ({ sx }) => {
     containerRef.value?.classList.toggle('topo-zoom-far', Number(sx) < 0.55)
+    updateCanvasScroll()
   })
+  graph.on('translate', () => updateCanvasScroll())
+  graph.on('node:moved', () => updateCanvasScroll())
 
   graph.on('node:click', ({ node, e }) => {
+    if (node.getData()?.isCrossing) return
     const nodeData = node.getData()?.node
     // 云节点：详情面板走虚拟节点专属逻辑，不进入设备资产操作
     if (nodeData?.is_cloud) {
@@ -2431,10 +2684,21 @@ function initGraph() {
 
   graph.on('blank:click', () => {
     if (!editMode.value) return
+    if (Date.now() < suppressBlankClickUntil) return
     clearSizeSelection()
   })
 
+  graph.on('blank:mousedown', ({ e }) => {
+    if (!editMode.value || editTool.value !== 'move' || !graph) return
+    const native = e?.originalEvent || e
+    if (native?.button !== 0) return
+    const target = native?.target
+    if (target?.closest?.('.x6-node, .x6-edge, .topo-region-select')) return
+    startRegionSelect(native)
+  })
+
   graph.on('node:mousedown', ({ node, e }) => {
+    if (node.getData()?.isCrossing) return
     if (!editMode.value || editTool.value !== 'connect') return
     const native = e?.originalEvent || e
     if (native?.button !== 0) return
@@ -2444,6 +2708,7 @@ function initGraph() {
   })
 
   graph.on('node:mousedown', ({ node, e }) => {
+    if (node.getData()?.isCrossing) return
     if (!editMode.value || editTool.value !== 'move') return
     const native = e?.originalEvent || e
     if (native?.button !== 0) return
@@ -2466,6 +2731,7 @@ function initGraph() {
   })
 
   graph.on('node:dblclick', ({ node }) => {
+    if (node.getData()?.isCrossing) return
     const nodeData = node.getData()?.node
     if (nodeData?.is_cloud) {
       selectedEdge.value = null
@@ -2485,6 +2751,7 @@ function initGraph() {
     if (groupDrag) {
       if (node.id === groupDrag.leaderId) finishGroupDrag(node)
       scheduleSmartEdgeAnchors()
+      scheduleLayoutAutoSave()
       return
     }
     const item = nodeModelForCell(node)
@@ -2495,12 +2762,11 @@ function initGraph() {
       dirty.value = true
     }
     scheduleSmartEdgeAnchors()
+    scheduleLayoutAutoSave()
   })
 
   graph.on('edge:mousedown', ({ edge, e }) => {
     if (!editMode.value) return
-    // 云出口链路由拓扑布局 JSON 维护，不参与 DeviceConnection 的端点改接/偏移逻辑
-    if (edge.getData()?.isCloudLink) return
     const native = e?.originalEvent || e
     if (native?.target?.closest?.('.x6-edge-label')) {
       startFlowLabelDrag(edge, native)
@@ -2521,19 +2787,12 @@ function initGraph() {
       ElMessage.info(t('topology.readonlyModeHint'))
       return
     }
-    // 移动布局模式只允许拖动节点，双击连线不得删除，避免拖动过程中误丢连线
-    if (editTool.value !== 'connect') {
-      ElMessage.info('移动布局模式下双击不会删除连线；如需删除请使用链路详情中的「删除连线」按钮')
+    if (edge.getData()?.cloudLinkId) {
+      ElMessage.info('云出口链路请通过链路详情修改接口或删除；设备连接双击可修改参数')
       return
     }
-    const cloudLinkId = edge.getData()?.cloudLinkId
-    if (cloudLinkId) {
-      await removeCloudLink(cloudLinkId, edge)
-      return
-    }
-    const connId = edge.getData()?.connectionId
-    if (!connId) return
-    await removeConnection(connId, edge)
+    if (!edge.getData()?.connectionId) return
+    openEditConnection(edge)
   })
 }
 
@@ -2610,6 +2869,113 @@ function selectAllSizeNodes() {
     .map((node) => node.id)
   syncSizeInputFromNode(sizeNodeIds.value.length ? graph.getCellById(sizeNodeIds.value[0]) : null)
   highlightSizeNodes()
+}
+
+function startRegionSelect(native) {
+  const rect = containerRef.value?.getBoundingClientRect()
+  if (!rect) return
+  const startX = native.clientX - rect.left
+  const startY = native.clientY - rect.top
+  const pending = {
+    startX,
+    startY,
+    additive: Boolean(native.ctrlKey || native.metaKey),
+    rect,
+  }
+  regionArmed.value = false
+  regionSelecting.value = false
+  regionSelect.value = null
+  const cleanup = () => {
+    if (regionArmTimer) {
+      clearTimeout(regionArmTimer)
+      regionArmTimer = null
+    }
+    window.removeEventListener('mousemove', onMove)
+    window.removeEventListener('mouseup', onUp)
+    regionSelectCleanup = null
+  }
+  const onMove = (event) => {
+    const x = event.clientX - rect.left
+    const y = event.clientY - rect.top
+    if (!regionArmed.value) {
+      // 长按前的任何明显移动都取消框选准备，避免和拖动画布/点击冲突。
+      if (Math.hypot(x - startX, y - startY) >= 8) {
+        cleanup()
+        regionArmed.value = false
+        regionSelecting.value = false
+      }
+      return
+    }
+    if (!regionSelecting.value && Math.hypot(x - startX, y - startY) < 3) return
+    regionSelecting.value = true
+    event.preventDefault?.()
+    regionSelect.value = {
+      startX,
+      startY,
+      endX: x,
+      endY: y,
+      additive: pending.additive,
+      rect,
+    }
+  }
+  const onUp = () => {
+    cleanup()
+    if (regionSelecting.value || regionSelect.value) finishRegionSelect()
+    else {
+      regionArmed.value = false
+      regionSelect.value = null
+      regionSelecting.value = false
+    }
+  }
+  regionSelectCleanup = cleanup
+  window.addEventListener('mousemove', onMove)
+  window.addEventListener('mouseup', onUp)
+  regionArmTimer = setTimeout(() => {
+    regionArmTimer = null
+    if (!regionSelectCleanup) return
+    regionArmed.value = true
+  }, 1500)
+}
+
+function cancelRegionSelect() {
+  regionSelectCleanup?.()
+  regionSelectCleanup = null
+  if (regionArmTimer) {
+    clearTimeout(regionArmTimer)
+    regionArmTimer = null
+  }
+  regionSelect.value = null
+  regionSelecting.value = false
+  regionArmed.value = false
+}
+
+function finishRegionSelect() {
+  const region = regionSelect.value
+  regionSelect.value = null
+  regionSelecting.value = false
+  regionArmed.value = false
+  if (!region || !graph) return
+  suppressBlankClickUntil = Date.now() + 250
+  const localA = clientToLocalPoint(region.rect.left + Math.min(region.startX, region.endX), region.rect.top + Math.min(region.startY, region.endY))
+  const localB = clientToLocalPoint(region.rect.left + Math.max(region.startX, region.endX), region.rect.top + Math.max(region.startY, region.endY))
+  const left = Math.min(localA.x, localB.x)
+  const right = Math.max(localA.x, localB.x)
+  const top = Math.min(localA.y, localB.y)
+  const bottom = Math.max(localA.y, localB.y)
+  if (right - left < 4 && bottom - top < 4) return
+  const hits = graph.getNodes()
+    .filter((node) => node.getData()?.deviceId || node.getData()?.node?.is_cloud)
+    .filter((node) => {
+      const box = node.getBBox()
+      return box.x + box.width >= left && box.x <= right && box.y + box.height >= top && box.y <= bottom
+    })
+    .map((node) => node.id)
+  sizeNodeIds.value = region.additive
+    ? [...new Set([...sizeNodeIds.value, ...hits])]
+    : hits
+  syncSizeInputFromNode(sizeNodeIds.value.length ? graph.getCellById(sizeNodeIds.value[0]) : null)
+  highlightSizeNodes()
+  if (hits.length) ElMessage.success(`已框选 ${hits.length} 台设备，拖动任一已选设备可整组移动`)
 }
 
 function beginGroupDrag(node) {
@@ -2689,6 +3055,11 @@ function clearSizeSelection() {
 
 function onTopologyKeydown(event) {
   if (!editMode.value || editTool.value !== 'move') return
+  if (event.key === 'Escape' && (regionSelect.value || regionSelecting.value || regionArmed.value)) {
+    event.preventDefault()
+    cancelRegionSelect()
+    return
+  }
   if (!(event.ctrlKey || event.metaKey) || String(event.key).toLowerCase() !== 'a') return
   const tag = String(event.target?.tagName || '').toLowerCase()
   if (tag === 'input' || tag === 'textarea' || tag === 'select' || event.target?.isContentEditable) return
@@ -2768,10 +3139,15 @@ async function applyNodeIcon(url) {
 function nodeHtml(node) {
   const isCloud = Boolean(node.is_cloud)
   const status = node.status || 'unknown'
-  const statusColor = isCloud ? '#ffffff' : (STATUS_COLORS[status] || STATUS_COLORS.unknown)
+  const alertCount = Number(node.alert_count || 0)
+  const statusColor = isCloud
+    ? '#ffffff'
+    : (alertCount > 0
+      ? (ALERT_LEVEL_COLORS[node.alert_level] || ALERT_LEVEL_COLORS.warning)
+      : (STATUS_COLORS[status] || STATUS_COLORS.unknown))
   const statusLabel = isCloud ? '虚拟节点' : (STATUS_TEXT[status] || status || '未知')
-  const alerting = !isCloud && (status === 'warning' || status === 'offline')
-  const alertSymbol = status === 'offline' ? '×' : '!'
+  const alerting = !isCloud && (alertCount > 0 || status === 'warning' || status === 'offline')
+  const alertSymbol = alertCount > 0 ? String(alertCount > 99 ? '99+' : alertCount) : (status === 'offline' ? '×' : '!')
   const tooltip = isCloud
     ? `${node.label || '互联网出口'} · 云 / 互联网出口 · 拓扑虚拟节点`
     : `${node.label || ''} · ${node.ip_address || '未配置地址'} · ${node.vendor || '未知厂商'} · ${statusLabel}`
@@ -2787,7 +3163,7 @@ function nodeHtml(node) {
          ${iconSvg(isCloud ? 'cloud' : node.device_type, status, 31, isCloud ? '#ffffff' : '')}</div>`
 
   return `
-    <div xmlns="http://www.w3.org/1999/xhtml" class="topo-compact-node topo-status-${status}${isCloud ? ' topo-cloud-node' : ''}"
+    <div xmlns="http://www.w3.org/1999/xhtml" class="topo-compact-node topo-status-${status}${isCloud ? ' topo-cloud-node' : ''}${alertCount > 0 ? ' topo-has-alert' : ''}"
       title="${escapeHtml(tooltip)}"
       style="
       width:100%;height:100%;display:flex;align-items:center;justify-content:center;
@@ -2799,11 +3175,11 @@ function nodeHtml(node) {
       <div style="width:${NODE_WIDTH}px;height:${NODE_HEIGHT}px;display:flex;flex-direction:column;
         align-items:center;justify-content:center;box-sizing:border-box;padding:4px 6px;
         transform:scale(${nodeScale});transform-origin:center;">
-        <div style="position:relative;flex-shrink:0;filter:drop-shadow(0 3px 7px rgba(0,0,0,.4));">
+        <div class="topo-node-icon" style="position:relative;flex-shrink:0;filter:drop-shadow(0 3px 7px rgba(0,0,0,.4));">
           ${iconBlock}
-          ${alerting ? `<span class="topo-alert-badge" style="position:absolute;right:-7px;top:-7px;width:16px;height:16px;
-            border-radius:50%;background:${statusColor};color:#0b1220;border:2px solid #0b1220;
-            display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:900;
+          ${alerting ? `<span class="topo-alert-badge" style="position:absolute;right:-8px;top:-8px;min-width:16px;height:16px;padding:0 3px;
+            border-radius:9px;background:${statusColor};color:#0b1220;border:2px solid #0b1220;
+            display:flex;align-items:center;justify-content:center;font-size:10px;font-weight:900;
             line-height:1;box-shadow:0 0 10px ${statusColor}bb;">${alertSymbol}</span>` : ''}
         </div>
         <div class="device-name" style="max-width:92px;margin-top:2px;overflow:hidden;text-overflow:ellipsis;
@@ -2920,8 +3296,24 @@ function clampFlowLabelOffset(edge, offset) {
   }
 }
 
+const edgeColorValue = computed({
+  get: () => selectedEdge.value?.color || selectedEdge.value?.edge_color || '',
+  set: (value) => {
+    if (!selectedEdge.value) return
+    selectedEdge.value.color = value || ''
+    selectedEdge.value.edge_color = value || ''
+  },
+})
+
+function onEdgeColorChange(color) {
+  if (!selectedEdge.value) return
+  selectedEdge.value.color = color || ''
+  selectedEdge.value.edge_color = color || ''
+  dirty.value = true
+  render()
+}
+
 function edgeFlowLabels(edge) {
-  if (edge.is_cloud_link) return []
   const scale = flowLabelScale.value
   const gap = flowLabelGap()
   const labelOffset = edge.edge_label_offset && typeof edge.edge_label_offset === 'object'
@@ -2932,7 +3324,16 @@ function edgeFlowLabels(edge) {
     offset: { x: labelOffset.x, y: labelOffset.y },
   }
   const labelAttrs = (text, color) => ({
-    label: { text, fill: color, fontSize: 10 * scale, fontWeight: 700 },
+    label: {
+      text,
+      fill: color,
+      fontSize: 10 * scale,
+      fontWeight: 700,
+      fontFamily: '-apple-system, Microsoft YaHei, sans-serif',
+      textAnchor: 'middle',
+      textVerticalAnchor: 'middle',
+      class: 'topo-flow-label',
+    },
     body: {
       fill: 'rgba(15,23,42,0.94)',
       stroke: color,
@@ -2971,16 +3372,110 @@ function edgeFlowLabels(edge) {
 }
 
 function edgeStyle(edge) {
-  if (edge.is_cloud_link) {
-    return { color: '#0ea5e9', width: 1.8, dashed: true, animated: false }
-  }
   const up = edge.oper_up !== false
-  const color = utilColor(edge.utilization, up)
+  const status = edge.interface_status || (up ? (edge.has_errors ? 'error' : 'up') : 'down')
+  const statusColor = status === 'down' ? '#ef4444' : status === 'error' ? '#fbbf24' : '#22c55e'
+  if (edge.is_cloud_link) {
+    return {
+      color: status === 'up' ? (edge.color || '#0ea5e9') : statusColor,
+      width: status === 'down' ? 2.6 : 1.8,
+      dashed: true,
+      animated: status === 'up' || status === 'error',
+      flashing: status === 'down',
+      status,
+    }
+  }
+  const color = status === 'up' ? (edge.edge_color || statusColor) : statusColor
   const util = edge.utilization || 0
-  const width = Math.min(3.5, 1.4 + util / 45)
+  const width = status === 'down' ? 2.6 : status === 'error' ? 2.2 : Math.min(3.2, 1.6 + util / 60)
   const flow = Math.max(edge.src_out_bps || 0, edge.src_in_bps || 0,
     edge.dst_out_bps || 0, edge.dst_in_bps || 0)
-  return { color, width, animated: up && flow > 0 }
+  return {
+    color,
+    width,
+    animated: status === 'up' || status === 'error',
+    flashing: status === 'down',
+    status,
+  }
+}
+
+function segmentIntersection(a, b, c, d) {
+  const denominator = (b.x - a.x) * (d.y - c.y) - (b.y - a.y) * (d.x - c.x)
+  if (Math.abs(denominator) < 1e-7) return null
+  const t = ((c.x - a.x) * (d.y - c.y) - (c.y - a.y) * (d.x - c.x)) / denominator
+  const u = ((c.x - a.x) * (b.y - a.y) - (c.y - a.y) * (b.x - a.x)) / denominator
+  if (t < 0.02 || t > 0.98 || u < 0.02 || u > 0.98) return null
+  return { x: a.x + t * (b.x - a.x), y: a.y + t * (b.y - a.y) }
+}
+
+function edgeGeomSegments(edge) {
+  const source = edge.getSourcePoint?.()
+  const target = edge.getTargetPoint?.()
+  const vertices = edge.getVertices?.() || []
+  if (!source || !target) return []
+  const points = [source, ...vertices, target]
+  const segments = []
+  for (let i = 0; i < points.length - 1; i += 1) segments.push([points[i], points[i + 1]])
+  return segments
+}
+
+function drawCrossingBridges() {
+  if (!graph) return
+  const edges = graph.getEdges()
+  const geometries = edges.map((edge) => ({ edge, segments: edgeGeomSegments(edge) }))
+  const seen = new Set()
+  let count = 0
+  for (let i = 0; i < geometries.length && count < 120; i += 1) {
+    for (let j = i + 1; j < geometries.length && count < 120; j += 1) {
+      const a = geometries[i]
+      const b = geometries[j]
+      if (!a.segments.length || !b.segments.length) continue
+      if (a.edge.getSourceCellId?.() === b.edge.getSourceCellId?.()
+        && a.edge.getTargetCellId?.() === b.edge.getTargetCellId?.()) continue
+      for (const [p1, p2] of a.segments) {
+        for (const [p3, p4] of b.segments) {
+          const point = segmentIntersection(p1, p2, p3, p4)
+          if (!point) continue
+          const key = `${Math.round(point.x / 6)}:${Math.round(point.y / 6)}`
+          if (seen.has(key)) continue
+          seen.add(key)
+          const x = point.x - 6
+          const y = point.y - 6
+          graph.addNode({
+            id: `cross_bg_${count}`,
+            shape: 'circle',
+            x,
+            y,
+            width: 12,
+            height: 12,
+            zIndex: 4,
+            attrs: { body: { fill: '#0b1220', stroke: '#0b1220', pointerEvents: 'none' } },
+            data: { isCrossing: true },
+          })
+          graph.addNode({
+            id: `cross_arc_${count}`,
+            shape: 'path',
+            x,
+            y,
+            width: 12,
+            height: 12,
+            zIndex: 5,
+            attrs: {
+              path: {
+                d: 'M 1 8 C 4 1, 8 1, 11 8',
+                fill: 'none',
+                stroke: '#94a3b8',
+                strokeWidth: 1.4,
+                pointerEvents: 'none',
+              },
+            },
+            data: { isCrossing: true },
+          })
+          count += 1
+        }
+      }
+    }
+  }
 }
 
 function render() {
@@ -3045,11 +3540,18 @@ function render() {
     }
 
     let routeVertex = parallelVertex
-    if (e.edge_offset && srcPos && dstPos) {
-      const base = routeVertex || {
-        x: (srcPos.cx + dstPos.cx) / 2,
-        y: (srcPos.cy + dstPos.cy) / 2,
-      }
+    let routeVertices = []
+    const base = srcPos && dstPos
+      ? { x: (srcPos.cx + dstPos.cx) / 2, y: (srcPos.cy + dstPos.cy) / 2 }
+      : null
+    if (Array.isArray(e.edge_offset?.points) && e.edge_offset.points.length && base) {
+      routeVertices = e.edge_offset.points.slice(0, 4).map((point) => ({
+        x: base.x + Number(point.x || 0),
+        y: base.y + Number(point.y || 0),
+      }))
+      routeVertex = null
+    } else if (e.edge_offset && (Number(e.edge_offset.x || 0) || Number(e.edge_offset.y || 0)) && base) {
+      // 兼容旧版单控制点偏移，始终相对设备中心中点。
       routeVertex = {
         x: base.x + Number(e.edge_offset.x || 0),
         y: base.y + Number(e.edge_offset.y || 0),
@@ -3108,16 +3610,9 @@ function render() {
       source: sourceTerminal,
       target: targetTerminal,
       connector: { name: 'rounded', args: { radius: 10 } },
-      router: {
-        name: 'manhattan',
-        args: {
-          padding: 32,
-          step: 16,
-          startDirections: ['bottom', 'top', 'left', 'right'],
-          endDirections: ['top', 'bottom', 'left', 'right'],
-        },
-      },
-      ...(routeVertex ? { vertices: [routeVertex] } : {}),
+      // 使用普通路由，允许设备间斜线连接；不再强制曼哈顿直角折线。
+      router: { name: 'normal' },
+      ...(routeVertices.length ? { vertices: routeVertices } : (routeVertex ? { vertices: [routeVertex] } : {})),
       zIndex: 1,
       attrs: {
         line: {
@@ -3126,9 +3621,9 @@ function render() {
           strokeDasharray: style.dashed ? '7 5' : (style.animated ? '8 6' : ''),
           sourceMarker: null,
           targetMarker: null,
-          style: style.animated
-            ? { animation: 'topo-dash 1.2s linear infinite' }
-            : {},
+          style: style.flashing
+            ? { animation: 'topo-edge-alert .9s ease-in-out infinite' }
+            : (style.animated ? { animation: style.status === 'error' ? 'topo-dash 1.2s linear infinite' : 'topo-dash 1.8s linear infinite' } : {}),
           opacity: e.oper_up === false ? 0.55 : 1,
         },
       },
@@ -3139,6 +3634,7 @@ function render() {
         isCloudLink: Boolean(e.is_cloud_link),
         edgeOffset: e.edge_offset || null,
         labelOffset: e.edge_label_offset || null,
+        edgeColor: e.edge_color || '', 
         autoVertex: parallelVertex,
         sourceAnchor: e.source_anchor || null,
         destAnchor: e.dest_anchor || null,
@@ -3146,6 +3642,8 @@ function render() {
     })
   })
   graph.getEdges().forEach(rememberFlowLabels)
+  drawCrossingBridges()
+  updateCanvasScroll()
 
   if (needsFit) {
     needsFit = false
@@ -3172,7 +3670,7 @@ function onCanvasPointerLeave() {
   clearNodeHighlight()
 }
 
-// 删除连线统一入口：双击（仅拖拽连线模式）和链路详情按钮都必须二次确认
+// 删除连线统一入口：链路详情按钮二次确认；双击连线用于修改参数
 async function removeConnection(connectionId, edge = null) {
   if (!connectionId) return
   const sourceLabel = edge?.getSourceCell?.()?.getData?.()?.node?.label
@@ -3254,7 +3752,7 @@ function cloudDefaultPosition() {
   return { x: 120, y: 120 }
 }
 
-function addCloudNode() {
+async function addCloudNode() {
   if (!editMode.value || !graph) return
   const cloudId = nextCloudNodeId()
   const { x, y } = cloudDefaultPosition()
@@ -3269,12 +3767,24 @@ function addCloudNode() {
   })
   if (!node) return
   cloudNodes.value.push(node)
+  nodes.value.push(node)
   dirty.value = true
   selectedEdge.value = null
   selectedNode.value = node
-  applyScaleView()
+  // 只新增云节点，不重绘已有机柜/设备节点，避免任何布局回退。
+  graph.addNode({
+    id: node.id,
+    shape: 'topo-device',
+    x: node.x,
+    y: node.y,
+    width: nodeWidth(node),
+    height: nodeHeight(node),
+    zIndex: 10,
+    data: { deviceId: null, node },
+  })
   highlightNode(node.id)
   ElMessage.success('已添加云出口节点，拖动调整位置后点击「保存布局」持久化')
+  scheduleLayoutAutoSave()
 }
 
 async function renameCloudNode(node) {
@@ -3293,10 +3803,13 @@ async function renameCloudNode(node) {
     )
     const label = String(value || '').trim()
     if (!label) return
-    node.label = label
+    const cloudNode = cloudNodes.value.find((item) => item.id === node.id) || node
+    cloudNode.label = label
+    if (selectedNode.value?.id === node.id) selectedNode.value.label = label
     dirty.value = true
     applyScaleView()
-    ElMessage.success('云出口已重命名，点击「保存布局」持久化')
+    const saved = await saveLayout({ silent: true })
+    ElMessage.success(saved ? '云出口已重命名并保存' : '云出口已重命名，请点击「保存布局」持久化')
   } catch {
     /* 用户取消 */
   }
@@ -3365,6 +3878,67 @@ function onCloudLinkDeviceChange(deviceId) {
   loadCloudLinkInterfaces(deviceId)
 }
 
+function addCloudLinkCell(link) {
+  if (!graph || !link) return
+  const sourceCell = graph.getCellById(link.source)
+  const targetCell = graph.getCellById(link.target)
+  const sourceBox = sourceCell?.getBBox?.()
+  const targetBox = targetCell?.getBBox?.()
+  let routeVertex = null
+  let routeVertices = []
+  let baseX = null
+  let baseY = null
+  if (sourceBox && targetBox) {
+    baseX = (sourceBox.x + sourceBox.width / 2 + targetBox.x + targetBox.width / 2) / 2
+    baseY = (sourceBox.y + sourceBox.height / 2 + targetBox.y + targetBox.height / 2) / 2
+  }
+  if (Array.isArray(link.edge_offset?.points) && link.edge_offset.points.length && baseX !== null) {
+    routeVertices = link.edge_offset.points.slice(0, 4).map((point) => ({
+      x: baseX + Number(point.x || 0),
+      y: baseY + Number(point.y || 0),
+    }))
+  } else if (link.edge_offset && baseX !== null) {
+    routeVertex = {
+      x: baseX + Number(link.edge_offset.x || 0),
+      y: baseY + Number(link.edge_offset.y || 0),
+    }
+  }
+  const style = edgeStyle(link)
+  const edge = graph.addEdge({
+    id: link.id,
+    source: link.source,
+    target: link.target,
+    connector: { name: 'rounded', args: { radius: 10 } },
+    router: { name: 'normal' },
+    ...(routeVertices.length ? { vertices: routeVertices } : (routeVertex ? { vertices: [routeVertex] } : {})),
+    zIndex: 1,
+    attrs: {
+      line: {
+        stroke: style.color,
+        strokeWidth: style.width,
+        strokeDasharray: style.dashed ? '7 5' : (style.animated ? '8 6' : ''),
+        sourceMarker: null,
+        targetMarker: null,
+        style: style.flashing
+          ? { animation: 'topo-edge-alert .9s ease-in-out infinite' }
+          : (style.animated ? { animation: 'topo-dash 1.8s linear infinite' } : {}),
+        opacity: style.status === 'down' ? 1 : 0.95,
+      },
+    },
+    labels: showTraffic.value ? edgeFlowLabels(link) : [],
+    data: {
+      cloudLinkId: link.cloud_link_id,
+      isCloudLink: true,
+      edgeOffset: link.edge_offset || null,
+      edgeLabelOffset: link.edge_label_offset || null,
+      sourceAnchor: link.source_anchor || null,
+      destAnchor: link.dest_anchor || null,
+    },
+  })
+  rememberFlowLabels(edge)
+  return edge
+}
+
 function submitCloudLink() {
   const cloudNode = cloudNodes.value.find(
     (node) => Number(node.cloud_id) === Number(cloudLinkForm.cloud_node_id),
@@ -3387,7 +3961,8 @@ function submitCloudLink() {
     return
   }
   const linkId = nextCloudLinkId()
-  cloudLinks.value.push({
+  const iface = cloudLinkInterfaces.value.find((item) => item.name === cloudLinkForm.interface)
+  const link = {
     id: `cloudlink_${linkId}`,
     cloud_link_id: linkId,
     connection_id: null,
@@ -3397,11 +3972,24 @@ function submitCloudLink() {
     target,
     source_interface: '',
     target_interface: String(cloudLinkForm.interface || ''),
-  })
+    edge_offset: null,
+    edge_label_offset: null,
+    color: '',
+    capacity_bps: iface?.speed ?? null,
+    src_in_bps: null,
+    src_out_bps: null,
+    dst_in_bps: iface?.in_bps ?? null,
+    dst_out_bps: iface?.out_bps ?? null,
+    oper_up: iface ? iface.oper_status === 'up' : null,
+    interface_status: iface ? (iface.oper_status === 'up' ? ((iface.in_errors || 0) + (iface.out_errors || 0) > 0 ? 'error' : 'up') : 'down') : 'unknown',
+  }
+  cloudLinks.value.push(link)
+  edges.value.push(link)
   dirty.value = true
   cloudLinkDialogVisible.value = false
-  applyScaleView()
+  addCloudLinkCell(link)
   ElMessage.success('已添加云出口链路，点击「保存布局」持久化')
+  scheduleLayoutAutoSave()
 }
 
 async function removeCloudLink(linkId, edge = null) {
@@ -3432,6 +4020,12 @@ async function removeCloudLink(linkId, edge = null) {
       /* render 已重建画布 */
     }
   }
+}
+
+function editSelectedEdge() {
+  if (!selectedEdge.value || selectedEdge.value.is_cloud_link) return
+  const edge = graph?.getEdges().find((item) => item.getData()?.connectionId === selectedEdge.value.connection_id)
+  if (edge) openEditConnection(edge)
 }
 
 function deleteSelectedEdge() {
@@ -3511,6 +4105,7 @@ function resizeGraphToContainer() {
   if (!width || !height) return false
   // 显式传入容器尺寸，避免 X6 继续使用初始化时的旧宽高
   graph.resize(width, height)
+  updateCanvasScroll()
   return true
 }
 
@@ -3526,6 +4121,8 @@ function fitView() {
     const padding = Math.max(20, Math.min(56, Math.round(el.clientWidth * 0.025)))
     graph.zoomToFit({ padding, maxScale: 1.45, minScale: 0.1 })
     graph.centerContent()
+    updateCanvasScroll()
+    setTimeout(updateCanvasScroll, 80)
   } catch {
     graph.centerContent()
   }
@@ -3885,10 +4482,115 @@ async function deleteDevice(node) {
   }
 }
 
+function canvasScrollTrackLength(axis) {
+  const el = containerRef.value
+  if (!el) return 1
+  return Math.max(1, (axis === 'x' ? el.clientWidth : el.clientHeight) - 28)
+}
+
+function updateCanvasScroll() {
+  if (!graph || !containerRef.value) return
+  const el = containerRef.value
+  const bbox = graph.getContentArea()
+  const scale = Number(graph.zoom()) || 1
+  const contentW = bbox.width * scale + CANVAS_SCROLL_PADDING * 2
+  const contentH = bbox.height * scale + CANVAS_SCROLL_PADDING * 2
+  const maxX = Math.max(0, contentW - el.clientWidth)
+  const maxY = Math.max(0, contentH - el.clientHeight)
+  canvasScroll.maxX = maxX
+  canvasScroll.maxY = maxY
+  const matrix = graph.matrix()
+  let left = CANVAS_SCROLL_PADDING - bbox.x * scale - matrix.e
+  let top = CANVAS_SCROLL_PADDING - bbox.y * scale - matrix.f
+  left = Math.max(0, Math.min(maxX, left))
+  top = Math.max(0, Math.min(maxY, top))
+  const trackX = canvasScrollTrackLength('x')
+  const trackY = canvasScrollTrackLength('y')
+  const thumbX = maxX > 0
+    ? Math.max(36, Math.min(trackX, trackX * (el.clientWidth / contentW)))
+    : trackX
+  const thumbY = maxY > 0
+    ? Math.max(36, Math.min(trackY, trackY * (el.clientHeight / contentH)))
+    : trackY
+  canvasScroll.xVisible = maxX > 1
+  canvasScroll.yVisible = maxY > 1
+  canvasScroll.xThumb = thumbX
+  canvasScroll.yThumb = thumbY
+  canvasScroll.xLeft = maxX > 0 ? (left / maxX) * (trackX - thumbX) : 0
+  canvasScroll.yLeft = maxY > 0 ? (top / maxY) * (trackY - thumbY) : 0
+}
+
+function applyCanvasScroll(left, top) {
+  if (!graph) return
+  const bbox = graph.getContentArea()
+  const scale = Number(graph.zoom()) || 1
+  const clampedLeft = Math.max(0, Math.min(canvasScroll.maxX, left))
+  const clampedTop = Math.max(0, Math.min(canvasScroll.maxY, top))
+  graph.translate(
+    CANVAS_SCROLL_PADDING - clampedLeft - bbox.x * scale,
+    CANVAS_SCROLL_PADDING - clampedTop - bbox.y * scale,
+  )
+  updateCanvasScroll()
+}
+
+function startCanvasScroll(axis, event) {
+  if (!graph) return
+  const max = axis === 'x' ? canvasScroll.maxX : canvasScroll.maxY
+  if (max <= 0) return
+  const track = event.currentTarget
+  const rect = track.getBoundingClientRect()
+  const trackLength = Math.max(1, (axis === 'x' ? rect.width : rect.height))
+  const thumbLength = axis === 'x' ? canvasScroll.xThumb : canvasScroll.yThumb
+  const startPos = axis === 'x' ? event.clientX : event.clientY
+  const isThumb = Boolean(event.target?.closest?.('.topo-canvas-scroll-thumb'))
+  const startScroll = isThumb
+    ? (axis === 'x' ? canvasScrollScrollValue('x') : canvasScrollScrollValue('y'))
+    : Math.max(0, Math.min(max, ((startPos - (axis === 'x' ? rect.left : rect.top)) / trackLength) * max))
+  if (!isThumb) {
+    if (axis === 'x') applyCanvasScroll(startScroll, canvasScrollScrollValue('y'))
+    else applyCanvasScroll(canvasScrollScrollValue('x'), startScroll)
+  }
+  const move = (moveEvent) => {
+    const pos = axis === 'x' ? moveEvent.clientX : moveEvent.clientY
+    const delta = pos - startPos
+    const scroll = startScroll + (delta / Math.max(1, trackLength - thumbLength)) * max
+    if (axis === 'x') applyCanvasScroll(scroll, canvasScrollScrollValue('y'))
+    else applyCanvasScroll(canvasScrollScrollValue('x'), scroll)
+  }
+  const up = () => {
+    window.removeEventListener('mousemove', move)
+    window.removeEventListener('mouseup', up)
+    canvasScrollDrag = null
+  }
+  canvasScrollDrag = { axis }
+  window.addEventListener('mousemove', move)
+  window.addEventListener('mouseup', up)
+}
+
+function canvasScrollScrollValue(axis) {
+  const max = axis === 'x' ? canvasScroll.maxX : canvasScroll.maxY
+  const track = canvasScrollTrackLength(axis)
+  const thumb = axis === 'x' ? canvasScroll.xThumb : canvasScroll.yThumb
+  const left = axis === 'x' ? canvasScroll.xLeft : canvasScroll.yLeft
+  if (max <= 0 || track - thumb <= 0) return 0
+  return (left / (track - thumb)) * max
+}
+
+function onCanvasWheel(event) {
+  if (!graph || !editMode.value) return
+  // 编辑模式普通滚轮缩放；Ctrl/Meta 保留 X6 自带滚轮缩放。
+  if (event.ctrlKey || event.metaKey) return
+  event.preventDefault?.()
+  const next = Math.max(0.25, Math.min(2.4, graph.zoom() + (event.deltaY > 0 ? -0.08 : 0.08)))
+  graph.zoomTo(next)
+  updateCanvasScroll()
+}
+
 function zoomBy(delta) {
   if (!graph) return
   const next = Math.max(0.25, Math.min(2.4, graph.zoom() + delta))
   graph.zoomTo(next)
+  updateCanvasScroll()
 }
 
 function applyMode() {
@@ -3902,8 +4604,21 @@ function applyMode() {
   if (editMode.value) dirty.value = false
 }
 
-async function saveLayout() {
-  if (!editMode.value || !graph) return
+function scheduleLayoutAutoSave() {
+  // 编辑模式只标记未保存，不再实时落库；离开编辑页面时统一询问。
+  if (!editMode.value) return
+  dirty.value = true
+}
+
+async function saveLayout(options = {}) {
+  if (!editMode.value || !graph) return false
+  if (options?.silent && savingLayout.value) return false
+  if (!options?.silent && autoSaveTimer) {
+    clearTimeout(autoSaveTimer)
+    autoSaveTimer = null
+  }
+  savingLayout.value = true
+  try {
   const devicePayload = graph
     .getNodes()
     .map((node) => ({
@@ -3944,6 +4659,8 @@ async function saveLayout() {
         dest_device_id: edge.getTargetCell()?.getData()?.deviceId,
         offset_x: Number(offset.x || 0),
         offset_y: Number(offset.y || 0),
+        offset_points: Array.isArray(offset.points) ? offset.points : [],
+        edge_color: edge.getData()?.edgeColor || '',
         label_offset_x: Number(labelOffset.x || 0),
         label_offset_y: Number(labelOffset.y || 0),
         source_anchor: edge.getData()?.sourceAnchor || null,
@@ -3958,6 +4675,8 @@ async function saveLayout() {
       connection_id: edge.connection_id,
       offset_x: Number(edge.edge_offset?.x || 0),
       offset_y: Number(edge.edge_offset?.y || 0),
+      offset_points: Array.isArray(edge.edge_offset?.points) ? edge.edge_offset.points : [],
+      edge_color: edge.edge_color || '',
       label_offset_x: Number(edge.edge_label_offset?.x || 0),
       label_offset_y: Number(edge.edge_label_offset?.y || 0),
     }
@@ -3972,10 +4691,16 @@ async function saveLayout() {
       target: link.target,
       source_interface: link.source_interface || '',
       target_interface: link.target_interface || '',
+      offset_x: Number(link.edge_offset?.x || 0),
+      offset_y: Number(link.edge_offset?.y || 0),
+      offset_points: Array.isArray(link.edge_offset?.points) ? link.edge_offset.points : [],
+      label_offset_x: Number(link.edge_label_offset?.x || 0),
+      label_offset_y: Number(link.edge_label_offset?.y || 0),
+      source_anchor: link.source_anchor || null,
+      dest_anchor: link.dest_anchor || null,
+      color: link.color || '',
     }))
     .filter((link) => Number.isFinite(link.id) && link.id > 0)
-  savingLayout.value = true
-  try {
     const res = await topologyApi.saveLayout({
       nodes: devicePayload,
       edges: edgePayload,
@@ -3983,9 +4708,12 @@ async function saveLayout() {
       cloud_links: cloudLinkPayload,
     })
     dirty.value = false
-    ElMessage.success(res.data.message || t('topology.layoutSaved'))
+    if (!options?.silent) {
+      ElMessage.success(res.data.message || t('topology.layoutSaved'))
+    }
   } catch (e) {
-    ElMessage.error(e.message || t('topology.saveLayoutFailed'))
+    ElMessage.error(e?.response?.data?.detail || e.message || t('topology.saveLayoutFailed'))
+    return false
   } finally {
     savingLayout.value = false
   }
@@ -4081,6 +4809,11 @@ async function loadTopology(showLoading = true, { preserveDirty = true } = {}) {
     }
     const fetchedCloudNodes = (res.data.cloud_nodes || []).map(normalizeCloudNode).filter(Boolean)
     const fetchedCloudLinks = (res.data.cloud_links || []).map(normalizeCloudLink).filter(Boolean)
+    const totalActiveAlerts = fetched.reduce((sum, node) => sum + Number(node.alert_count || 0), 0)
+    if (lastTopologyAlertCount !== null && totalActiveAlerts > lastTopologyAlertCount && alertSoundEnabled.value) {
+      playAlertSound()
+    }
+    lastTopologyAlertCount = totalActiveAlerts
     allNodes.value = fetched
     allEdges.value = res.data.edges || []
     cloudNodes.value = preserveLocal ? localCloudNodes : fetchedCloudNodes
@@ -4126,6 +4859,7 @@ async function autoDiscover() {
 }
 
 async function submitConnection() {
+  if (connectionSubmitting.value) return
   if (!form.source_device_id || !form.dest_device_id) {
     ElMessage.warning(t('topology.selectBothDevices'))
     return
@@ -4134,17 +4868,56 @@ async function submitConnection() {
     ElMessage.warning(t('topology.sameDeviceNotAllowed'))
     return
   }
+  connectionSubmitting.value = true
   try {
-    await topologyApi.addConnection({
+    // 保存失败不应阻止添加连线；否则第一次点击会直接失败。
+    if (dirty.value) {
+      await saveLayout({ silent: true })
+    }
+    const payload = {
       ...form,
       source_anchor: connectionAnchors.value.source,
       dest_anchor: connectionAnchors.value.dest,
-    })
+    }
+    if (editingConnectionId.value) {
+      await topologyApi.updateConnection(editingConnectionId.value, payload)
+      ElMessage.success('设备连接参数已更新')
+      dialogVisible.value = false
+      editingConnectionId.value = null
+      await loadTopology(true)
+      return
+    }
+    const addOnce = () => topologyApi.addConnection(payload)
+    const isRetryable = (error) => {
+      const status = Number(error?.response?.status || 0)
+      return !status || status >= 500
+    }
+    try {
+      await addOnce()
+    } catch (firstError) {
+      const status = Number(firstError?.response?.status || 0)
+      const detail = String(firstError?.response?.data?.detail || firstError?.message || '')
+      if (status === 400 && detail.includes('已存在')) {
+        // 首次请求可能已经落库但响应丢失，按幂等成功处理。
+      } else if (isRetryable(firstError)) {
+        try {
+          await addOnce()
+        } catch (retryError) {
+          const retryStatus = Number(retryError?.response?.status || 0)
+          const retryDetail = String(retryError?.response?.data?.detail || retryError?.message || '')
+          if (!(retryStatus === 400 && retryDetail.includes('已存在'))) throw retryError
+        }
+      } else {
+        throw firstError
+      }
+    }
     ElMessage.success(t('topology.connectionAdded'))
     dialogVisible.value = false
     await loadTopology(true)
   } catch (e) {
-    ElMessage.error(e.message || t('topology.addFailed'))
+    ElMessage.error(e?.response?.data?.detail || e.message || t('topology.addFailed'))
+  } finally {
+    connectionSubmitting.value = false
   }
 }
 
@@ -4192,6 +4965,7 @@ onMounted(() => {
   containerRef.value?.addEventListener('mousemove', onCanvasPointerMove)
   containerRef.value?.addEventListener('mouseleave', onCanvasPointerLeave)
   containerRef.value?.addEventListener('mousedown', onFlowLabelMouseDown, true)
+  containerRef.value?.addEventListener('wheel', onCanvasWheel, { passive: false })
   loadTopology(true)
   document.addEventListener('fullscreenchange', onFullscreenChange)
   window.addEventListener('keydown', onTopologyKeydown)
@@ -4210,7 +4984,43 @@ onMounted(() => {
   window.addEventListener('resize', onWindowResize)
 })
 
+async function confirmLeaveWithUnsavedLayout() {
+  if (!editMode.value || !dirty.value) return true
+  try {
+    await ElMessageBox.confirm(
+      '当前拓扑布局尚未保存。是否保存后离开？',
+      '未保存的布局',
+      {
+        type: 'warning',
+        confirmButtonText: '保存并离开',
+        cancelButtonText: '不保存离开',
+        distinguishCancelAndClose: true,
+        showClose: true,
+      },
+    )
+    await saveLayout({ silent: true })
+    return !dirty.value
+  } catch (action) {
+    // cancel = 不保存离开；close = 取消离开
+    return action === 'cancel'
+  }
+}
+
+onBeforeRouteLeave(async () => {
+  return await confirmLeaveWithUnsavedLayout()
+})
+
+function onBeforeUnload(event) {
+  if (!editMode.value || !dirty.value) return
+  event.preventDefault()
+  event.returnValue = '当前拓扑布局尚未保存，确定离开吗？'
+}
+
+window.addEventListener('beforeunload', onBeforeUnload)
+
 onBeforeUnmount(() => {
+  cancelRegionSelect()
+  window.removeEventListener('beforeunload', onBeforeUnload)
   if (refreshTimer) clearInterval(refreshTimer)
   document.removeEventListener('visibilitychange', onTopologyVisibility)
   window.removeEventListener('focus', onTopologyVisibility)
@@ -4220,6 +5030,7 @@ onBeforeUnmount(() => {
   containerRef.value?.removeEventListener('mousemove', onCanvasPointerMove)
   containerRef.value?.removeEventListener('mouseleave', onCanvasPointerLeave)
   containerRef.value?.removeEventListener('mousedown', onFlowLabelMouseDown, true)
+  containerRef.value?.removeEventListener('wheel', onCanvasWheel)
   document.removeEventListener('fullscreenchange', onFullscreenChange)
   cleanupConnectDrag()
   cleanupEdgeDrag()
@@ -4230,6 +5041,7 @@ onBeforeUnmount(() => {
 </script>
 
 <style>
+
 @keyframes topo-dash {
   to {
     stroke-dashoffset: -28;
@@ -4398,6 +5210,49 @@ onBeforeUnmount(() => {
   min-height: 0;
   background: #0b1220;
   overflow: hidden;
+}
+
+.topo-canvas-scroll {
+  position: absolute;
+  z-index: 60;
+  background: rgba(8, 22, 37, 0.82);
+  border: 1px solid rgba(56, 189, 248, 0.2);
+  border-radius: 8px;
+  backdrop-filter: blur(4px);
+}
+.topo-canvas-scroll-x {
+  left: 10px;
+  right: 18px;
+  bottom: 6px;
+  height: 12px;
+}
+.topo-canvas-scroll-y {
+  top: 10px;
+  bottom: 18px;
+  right: 6px;
+  width: 12px;
+}
+.topo-canvas-scroll-thumb {
+  position: absolute;
+  left: 2px;
+  top: 2px;
+  height: 8px;
+  border-radius: 6px;
+  background: #38bdf8;
+  cursor: grab;
+  box-shadow: 0 0 8px rgba(56, 189, 248, 0.45);
+}
+.topo-canvas-scroll-y .topo-canvas-scroll-thumb {
+  left: 2px;
+  right: 2px;
+  top: 0;
+  width: 8px;
+  height: auto;
+  cursor: grab;
+}
+.topo-canvas-scroll-thumb:active {
+  cursor: grabbing;
+  background: #7dd3fc;
 }
 
 .topo-scale-filterbar {
@@ -4767,8 +5622,51 @@ onBeforeUnmount(() => {
   line-height: 1.35;
 }
 
+.interface-option-rich {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  line-height: 1.35;
+  padding: 2px 0;
+}
+.interface-option-rich span { font-size: 13px; font-weight: 600; }
+.interface-option-rich small { color: #8a9bab; font-size: 11px; }
+.interface-option-rich em { color: #38bdf8; font-size: 10px; font-style: normal; }
+.topo-region-select {
+  position: absolute;
+  z-index: 30;
+  border: 1px solid #38bdf8;
+  background: rgba(56, 189, 248, 0.12);
+  box-shadow: 0 0 12px rgba(56, 189, 248, 0.3) inset;
+  pointer-events: none;
+}
+.topo-region-hint {
+  position: absolute;
+  z-index: 31;
+  top: 14px;
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 7px 14px;
+  border: 1px solid rgba(56, 189, 248, 0.55);
+  border-radius: 18px;
+  background: rgba(8, 30, 48, 0.94);
+  color: #bae6fd;
+  font-size: 12px;
+  white-space: nowrap;
+  pointer-events: none;
+  box-shadow: 0 4px 18px rgba(0, 0, 0, 0.35);
+}
 .topology-container :deep(.topo-alert-badge) {
   animation: topo-alert-pulse 1.5s ease-in-out infinite;
+}
+
+.topology-container :deep(.topo-has-alert .topo-node-icon) {
+  animation: topo-icon-alert 1.2s ease-in-out infinite;
+}
+
+@keyframes topo-icon-alert {
+  0%, 100% { filter: drop-shadow(0 3px 7px rgba(0,0,0,.4)); }
+  50% { filter: drop-shadow(0 0 11px rgba(239,68,68,.95)) brightness(1.18); }
 }
 
 @keyframes topo-alert-pulse {
@@ -5114,11 +6012,11 @@ onBeforeUnmount(() => {
   left: 32px;
   bottom: 56px;
   z-index: 20;
-  width: 270px;
-  padding: 12px 14px;
+  width: 330px;
+  padding: 13px 15px;
   border-radius: 10px;
-  background: rgba(15, 23, 42, 0.95);
-  border: 1px solid rgba(56, 189, 248, 0.35);
+  background: rgba(15, 23, 42, 0.96);
+  border: 1px solid rgba(56, 189, 248, 0.38);
   color: #e2e8f0;
   font-size: 12px;
   box-shadow: 0 10px 30px rgba(0, 0, 0, 0.45);
@@ -5130,36 +6028,69 @@ onBeforeUnmount(() => {
   align-items: center;
   font-size: 13px;
   font-weight: 600;
-  margin-bottom: 8px;
+  margin-bottom: 9px;
+  padding-bottom: 7px;
+  border-bottom: 1px solid rgba(56, 189, 248, 0.15);
   color: #93c5fd;
 }
 
 .edge-row {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  gap: 8px;
-  padding: 3px 0;
+  display: grid;
+  grid-template-columns: 82px minmax(0, 1fr);
+  align-items: start;
+  gap: 10px;
+  padding: 4px 0;
 }
 
 .edge-row .k {
   color: #94a3b8;
+  line-height: 1.65;
+  white-space: nowrap;
 }
 
 .edge-row .v {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-start;
+  gap: 8px;
   color: #e2e8f0;
   font-weight: 600;
-  text-align: right;
+  line-height: 1.65;
+  text-align: left;
   word-break: break-all;
+}
+
+.edge-row .v :deep(.el-tag) {
+  align-self: flex-start;
+}
+
+.edge-row .v :deep(.el-color-picker__trigger) {
+  width: 38px;
+  height: 24px;
 }
 
 .flow-upload {
   color: #38bdf8;
-  margin-right: 10px;
 }
 
 .flow-download {
   color: #fbbf24;
+}
+
+.topology-container :deep(.x6-edge .x6-edge-label text) {
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: topo-flow-label-pulse 1.8s ease-in-out infinite;
+}
+
+@keyframes topo-edge-alert {
+  0%, 100% { opacity: .35; }
+  50% { opacity: 1; }
+}
+
+@keyframes topo-flow-label-pulse {
+  0%, 100% { opacity: 1; filter: drop-shadow(0 0 0 rgba(56, 189, 248, 0)); }
+  50% { opacity: .68; filter: drop-shadow(0 0 4px rgba(56, 189, 248, .65)); }
 }
 
 .edge-tip {

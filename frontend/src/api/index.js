@@ -1,10 +1,16 @@
 import axios from 'axios'
-import { getToken } from '@/store/auth'
+import { getToken, refreshToken } from '@/store/auth'
 
 const api = axios.create({
   baseURL: '/api',
   timeout: 30000,
 })
+
+// 大屏/机房展示是长期观看页签：401 时先静默续期，不跳登录页。
+function isDisplayPagePath() {
+  const path = window.location.pathname || ''
+  return path.startsWith('/bigscreen') || /^\/rooms\/[^/]+\/showcase/.test(path)
+}
 
 // 请求：自动携带登录令牌
 api.interceptors.request.use(
@@ -27,6 +33,17 @@ api.interceptors.response.use(
     if (detail) err.message = detail
 
     if (err?.response?.status === 401) {
+      if (isDisplayPagePath()) {
+        const config = err?.config || {}
+        if (!config._displayRetry) {
+          config._displayRetry = true
+          return refreshToken(true)
+            .then(() => api(config))
+            .catch(() => Promise.reject(err))
+        }
+        // 大屏续期失败也不清 token、不跳登录，保留当前展示页
+        return Promise.reject(err)
+      }
       localStorage.removeItem('nms_token')
       localStorage.removeItem('nms_user')
       localStorage.removeItem('nms_remember')
@@ -179,6 +196,9 @@ export const monitorApi = {
   bulkDeleteAlerts(items) {
     return api.post('/monitor/alerts/bulk-delete', { items })
   },
+  bulkHideAlerts(items) {
+    return api.post('/monitor/alerts/bulk-hide', { items })
+  },
   getHiddenAlerts(params = {}) {
     return api.get('/monitor/alerts/hidden', { params })
   },
@@ -231,8 +251,14 @@ export const topologyApi = {
   addConnection(data) {
     return api.post('/topology/add-connection', data)
   },
-  getDeviceInterfaces(deviceId) {
-    return api.get(`/monitor/devices/${deviceId}/interfaces`)
+  getDeviceInterfaces(deviceId, refresh = false) {
+    return api.get(`/monitor/devices/${deviceId}/interfaces`, {
+      params: refresh ? { refresh: true } : undefined,
+      timeout: 30000,
+    })
+  },
+  updateConnection(id, data) {
+    return api.put(`/topology/connection/${id}`, data)
   },
   deleteConnection(id) {
     return api.delete(`/topology/connection/${id}`)

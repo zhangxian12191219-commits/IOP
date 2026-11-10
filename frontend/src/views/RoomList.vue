@@ -60,7 +60,7 @@
         </el-table-column>
         <el-table-column :label="t('room.actions')" width="430" fixed="right">
           <template #default="{ row }">
-            <el-button type="primary" link size="small" @click="$router.push(`/rooms/${row.id}/showcase`)">
+            <el-button type="primary" link size="small" @click="openRoomShowcase(row)">
               <el-icon><DataBoard /></el-icon>机房展示
             </el-button>
             <el-button type="primary" link size="small" @click="openCabinetManager(row)">
@@ -758,10 +758,17 @@ import { ref, reactive, computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { roomApi } from '@/api'
+import { getToken, handoffToken } from '@/store/auth'
 import { formatDateTime } from '@/utils/time'
 
 const router = useRouter()
 const rooms = ref([])
+
+function openRoomShowcase(row) {
+  // 机房数字孪生用于长期展示：新页签打开，并交接当前登录态。
+  handoffToken(getToken())
+  window.open(`/rooms/${row.id}/showcase`, '_blank', 'noopener,noreferrer')
+}
 const loading = ref(false)
 const saving = ref(false)
 

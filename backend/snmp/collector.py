@@ -167,8 +167,12 @@ class DataCollector:
             except (TypeError, ValueError):
                 pass
 
-        # 服务器组件级明细：CPU/内存模块/风扇/电源/硬盘/各类温度分别保留
-        if str(getattr(device, "device_type", "") or "").lower() == "server":
+        # 组件级明细：服务器及交换机/路由/安全/无线/存储等网络设备
+        component_types = {
+            "server", "switch", "router", "firewall", "security",
+            "wireless", "loadbalancer", "storage", "ups",
+        }
+        if str(getattr(device, "device_type", "") or "").lower() in component_types:
             try:
                 components = await client.get_server_components()
                 summary = (components or {}).get("summary") or {}
@@ -253,6 +257,7 @@ class DataCollector:
         self._recover_offline_alerts(device)
         self._save_metrics(device, metrics)
         self._check_alerts(device, metrics)
+        await self._sync_external_alerts(device, "ipmi")
         if device.mib_id or device.custom_oids or device.custom_metrics or device.server_sensors:
             device.mib_id = None
             device.custom_oids = {}
@@ -264,6 +269,21 @@ class DataCollector:
                 self.db.rollback()
                 logger.warning("解除 IPMI 设备 MIB 绑定失败 %s: %s", device.ip_address, exc)
         return metrics
+
+    async def _sync_external_alerts(self, device: Device, source: str) -> None:
+        """把 Dell API 告警或 IPMI SEL 事件同步到平台；接口失败不误恢复旧告警。"""
+        try:
+            from ..services.device_alert_sync import (
+                fetch_api_alerts, fetch_ipmi_alerts, sync_external_alerts,
+            )
+            if source == "api":
+                events = await asyncio.to_thread(fetch_api_alerts, device)
+            else:
+                events = await asyncio.to_thread(fetch_ipmi_alerts, device)
+            if events is not None:
+                sync_external_alerts(self.db, device, source, events)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("设备原生告警同步失败 %s (%s): %s", device.ip_address, source, exc)
 
     async def _collect_api_device(self, device: Device) -> Optional[Dict[str, Any]]:
         """统一 API 接入：厂商 REST 适配器只执行只读登录/查询。"""
@@ -315,6 +335,7 @@ class DataCollector:
                 self._record_interface_history(device)
             except Exception as exc:  # noqa: BLE001
                 logger.debug("保存 API 设备接口失败 %s: %s", device.ip_address, exc)
+        await self._sync_external_alerts(device, "api")
         if device.mib_id or device.custom_oids or device.custom_metrics or device.server_sensors:
             device.mib_id = None
             device.custom_oids = {}

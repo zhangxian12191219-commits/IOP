@@ -25,6 +25,7 @@ from ..models.user import Group, User
 from ..models.schemas import DeviceCreate, DeviceUpdate, DeviceOut, MaintenanceCreate
 from ..services.placement import validate_placement
 from ..services import asset_io, asset_qr, icon_presets, license_manager, alert_rules as alert_rule_service
+from ..services.cache import invalidate_topology
 from ..services import asset_scope, audit
 from ..services.virtualization_crypto import encrypt_password
 from ..services.cache import invalidate_all
@@ -993,6 +994,7 @@ def update_device(
     invalidate_all()
     db.refresh(device)
     check_warranty_alerts(db, [device.id])
+    invalidate_topology()
     return device_to_dict(db, device)
 
 
@@ -1228,6 +1230,30 @@ def _device_alert_rules(db: Session, device: Device, metric: Optional[DeviceMetr
     return result
 
 
+def _storage_api_configured(device: Device) -> bool:
+    """存储设备是否已经配置过 API 对接字段。"""
+    paths = device.api_paths if isinstance(device.api_paths, dict) else {}
+    return bool(
+        device.device_type == "storage"
+        and (
+            device.storage_username
+            or device.storage_password_enc
+            or str(device.api_auth_type or "auto").strip().lower() not in ("", "auto")
+            or str(device.api_base_path or "").strip()
+            or str(paths.get("login") or "").strip()
+            or str(paths.get("metrics") or "").strip()
+        )
+    )
+
+
+def _effective_monitor_type(device: Device) -> str:
+    """兼容历史存储 API 设备：已配置 API 字段时按 API 对接展示。"""
+    method = str(device.monitor_type or "snmp").strip().lower()
+    if method not in ("api", "ipmi") and _storage_api_configured(device):
+        return "api"
+    return method if method in MONITOR_TYPES else "snmp"
+
+
 def device_to_dict(db: Session, device: Device) -> dict:
     """设备对象转字典（附带最新指标与告警数）"""
     metric = (
@@ -1284,7 +1310,7 @@ def device_to_dict(db: Session, device: Device) -> dict:
         "name": device.name,
         "ip_address": device.ip_address,
         "device_type": device.device_type,
-        "monitor_type": device.monitor_type or "snmp",
+        "monitor_type": _effective_monitor_type(device),
         "tcp_port": device.tcp_port or 80,
         "group_id": device.group_id,
         "group_name": group.name if group else None,

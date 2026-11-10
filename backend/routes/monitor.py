@@ -4,6 +4,7 @@ from fastapi.responses import Response
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 from typing import List, Optional, Dict, Any
+import asyncio
 from datetime import datetime, timedelta
 from urllib.parse import quote
 
@@ -30,6 +31,7 @@ DEVICE_TYPE_TEXT = {
 ALERT_TYPE_TEXT = {
     "cpu": "CPU", "memory": "内存", "temperature": "温度",
     "power": "电源", "offline": "离线", "down": "不可达", "slow": "响应慢",
+    "api_alert": "API 设备告警", "ipmi_sel": "IPMI 设备事件",
     "warranty": "维保到期", "storage_disk_fault": "存储磁盘故障",
 }
 WEBSITE_ALERT_TYPE_TEXT = {
@@ -357,13 +359,31 @@ def get_interface_summaries(
 
 
 @router.get("/devices/{device_id}/interfaces")
-def get_interfaces(device_id: int, request: Request, db: Session = Depends(get_db)):
-    """获取设备接口信息（按群组校验）"""
-    _get_scoped_device(db, request, device_id)
+async def get_interfaces(
+    device_id: int,
+    request: Request,
+    refresh: bool = Query(False, description="数据库无接口时是否实时采集一次"),
+    db: Session = Depends(get_db),
+):
+    """获取设备接口信息（按群组校验）。
+
+    设备刚添加或后台采集尚未完成时，数据库可能暂时没有接口。此时拓扑连接
+    弹窗可带 refresh=true 触发一次实时 SNMP 采集，避免源/目的接口下拉偶发为空。
+    """
+    device = _get_scoped_device(db, request, device_id)
     interfaces = db.query(DeviceInterface).filter(
         DeviceInterface.device_id == device_id
     ).all()
-    
+    if not interfaces and refresh:
+        try:
+            from ..snmp.collector import DataCollector
+            await asyncio.wait_for(DataCollector(db).collect_device(device), timeout=12)
+        except Exception:
+            pass
+        db.expire_all()
+        interfaces = db.query(DeviceInterface).filter(
+            DeviceInterface.device_id == device_id
+        ).all()
     return [iface_to_dict(i) for i in interfaces]
 
 
@@ -802,6 +822,30 @@ def bulk_delete_alerts(
         message=f"批量删除活动告警：成功 {deleted} 条，跳过 {skipped} 条",
     )
     return {"message": "批量删除完成", "deleted": deleted, "skipped": skipped}
+
+
+@router.post("/alerts/bulk-hide")
+def bulk_hide_alerts(
+    payload: AlertBulkDeletePayload,
+    request: Request,
+    db: Session = Depends(get_db),
+):
+    """批量抑制活动告警：隐藏后不再参与活动列表和再提醒，可在已抑制告警中恢复。"""
+    suppressed = 0
+    skipped = 0
+    for item in payload.items:
+        source = item.source if item.source in ("device", "website", "virtualization") else "device"
+        try:
+            _set_alert_hidden(db, request, item.id, source, True)
+            suppressed += 1
+        except HTTPException:
+            skipped += 1
+    audit_service.record(
+        db, request, module="alerts", action="suppress",
+        target_type="alert_batch", target_name=f"{suppressed} 条",
+        message=f"批量抑制告警：成功 {suppressed} 条，跳过 {skipped} 条",
+    )
+    return {"message": "批量抑制完成", "suppressed": suppressed, "skipped": skipped}
 
 
 @router.get("/alerts/hidden")
