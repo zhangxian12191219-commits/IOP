@@ -3,7 +3,7 @@
     <div class="im-head">
       <div>
         <div class="im-title"><el-icon><ChatDotRound /></el-icon>即时通信</div>
-        <div class="im-subtitle">在线用户实时消息 · 单聊 / 群聊 · 语音视频通话 · 群白板</div>
+        <div class="im-subtitle">在线用户实时消息 · 单聊 / 群聊 · 语音视频通话 · 单聊/群白板</div>
       </div>
       <div class="im-head-status">
         <div class="im-theme-picker">
@@ -40,7 +40,7 @@
       :closable="false"
       show-icon
       :title="`重要提示：聊天记录（含群消息与群白板）仅保留 ${imState.retentionDays || 15} 天`"
-      :description="`到期后文字消息、图片、文件与白板笔画会自动销毁，无法恢复。重要内容请及时保存到运维笔记。`"
+      :description="`到期后文字消息、图片、文件与单聊/群白板笔画会自动销毁，无法恢复。重要内容请及时保存到运维笔记。`"
     />
 
     <el-alert
@@ -51,6 +51,24 @@
       show-icon
       title="当前页面不是 HTTPS 环境，浏览器可能禁止麦克风和摄像头。请在 HTTPS 或 localhost 下使用语音/视频通话。"
     />
+
+    <el-alert
+      v-if="imState.whiteboardInvite"
+      class="im-whiteboard-invite"
+      type="success"
+      :closable="true"
+      show-icon
+      @close="dismissWhiteboardInvite"
+    >
+      <template #title>
+        <span class="im-whiteboard-invite-text">
+          <strong>{{ imState.whiteboardInvite.fromName }}</strong> 正在使用白板
+        </span>
+        <el-button size="small" type="primary" class="im-whiteboard-invite-btn" @click="joinWhiteboardInvite">
+          加入白板
+        </el-button>
+      </template>
+    </el-alert>
 
     <div class="im-shell">
       <aside class="im-contacts">
@@ -276,6 +294,9 @@
               <el-button size="small" type="primary" :disabled="!activePeer.online" @click="call('video')">
                 <el-icon><VideoCameraFilled /></el-icon>视频通话
               </el-button>
+              <el-button size="small" @click="openWhiteboard(null, activePeer.id)">
+                <el-icon><EditPen /></el-icon>白板
+              </el-button>
             </div>
           </header>
 
@@ -478,6 +499,7 @@ import {
   acceptIncoming, activeGroup, activePeer, addGroupMembers, connectIM, createGroup,
   deleteGroupMessage, deleteMessage as deleteChatMessage, imMessageSoundEnabled, imState,
   leaveGroup, onlineUsers, openConversation, openGroupConversation, openWhiteboard,
+  dismissWhiteboardInvite, joinWhiteboardInvite,
   recallGroupMessage, recallMessage as recallChatMessage, removeGroupMember,
   sendGroupMessage, sendGroupTyping, sendMessage, sendTyping, startCall, startGroupCall,
   toggleImMessageSound,
@@ -992,6 +1014,23 @@ onBeforeUnmount(() => {
 .im-title { display: flex; align-items: center; gap: 8px; font-size: 22px; font-weight: 800; color: #1d3b50; letter-spacing: .02em; }
 .im-title .el-icon { color: #167e9b; }
 .im-subtitle { color: #7d9ab3; font-size: 13px; margin-top: 5px; }
+.im-whiteboard-invite {
+  margin-bottom: 0;
+}
+.im-whiteboard-invite :deep(.el-alert__title) {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  width: 100%;
+}
+.im-whiteboard-invite-text {
+  min-width: 0;
+}
+.im-whiteboard-invite-btn {
+  flex-shrink: 0;
+}
+
 .im-retention-alert { margin-bottom: 0; }
 .im-media-warning { margin-bottom: 0; }
 .im-head-status { display: flex; align-items: center; gap: 12px; }

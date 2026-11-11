@@ -385,6 +385,13 @@ def export_rows(db: Session, devices: List[Device]) -> List[List[Any]]:
     return rows
 
 
+
+def _safe_excel_cell(value):
+    """阻止 CSV/Excel 公式注入：用户可控文本不能以公式前缀开头。"""
+    if isinstance(value, str) and value and value[0] in ("=", "+", "-", "@", "\t", "\r"):
+        return "'" + value
+    return value
+
 def export_xlsx(db: Session, devices: List[Device]) -> bytes:
     wb = Workbook()
     ws = wb.active
@@ -392,7 +399,7 @@ def export_xlsx(db: Session, devices: List[Device]) -> bytes:
     _header_row_style(ws, [c[4] for c in COLUMNS])
     for row_idx, row in enumerate(export_rows(db, devices), start=2):
         for col_idx, value in enumerate(row, start=1):
-            ws.cell(row=row_idx, column=col_idx, value=value)
+            ws.cell(row=row_idx, column=col_idx, value=_safe_excel_cell(value))
     ws.freeze_panes = "A2"
     ws.auto_filter.ref = f"A1:{get_column_letter(len(COLUMNS))}{len(devices) + 1}"
 
@@ -416,7 +423,7 @@ def export_csv(db: Session, devices: List[Device]) -> bytes:
     writer = csv.writer(buf)
     writer.writerow([header + (" *" if required else "") for header, _k, _w, _e, required in COLUMNS])
     for row in export_rows(db, devices):
-        writer.writerow(row)
+        writer.writerow([_safe_excel_cell(value) for value in row])
     # 加 BOM，保证 Excel 打开中文不乱码
     return buf.getvalue().encode("utf-8-sig")
 

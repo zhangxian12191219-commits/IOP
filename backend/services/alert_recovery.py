@@ -74,6 +74,49 @@ def build_recovery_payload(
     }
 
 
+def build_generic_recovery_payload(
+    *,
+    source: str,
+    alert_id: int,
+    name: str,
+    ip_address: str = "",
+    alert_type: str = "",
+    message: str = "",
+    level: str = "warning",
+    value: Any = None,
+    threshold: Any = None,
+    recovered_at: Optional[datetime] = None,
+    original_created_at: Optional[datetime] = None,
+    extra: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    """构建网站/虚拟化/API 等非设备指标告警的统一恢复通知负载。
+
+    source_id 使用负值，确保恢复消息不会命中原始告警通知的去重记录。
+    """
+    recovered_at = recovered_at or datetime.utcnow()
+    payload: Dict[str, Any] = {
+        "source": source,
+        "source_id": -abs(int(alert_id)) if alert_id else None,
+        "level": level or "warning",
+        "device_name": name or "告警对象",
+        "ip_address": ip_address or "",
+        "alert_type": alert_type or "alert",
+        "message": message or "",
+        "value": value,
+        "threshold": threshold,
+        "created_at": recovered_at.isoformat(timespec="seconds"),
+        "recovered_at": recovered_at.isoformat(timespec="seconds"),
+        "original_created_at": (
+            original_created_at.isoformat(timespec="seconds")
+            if original_created_at else None
+        ),
+        "recovery": True,
+    }
+    if extra:
+        payload.update(extra)
+    return payload
+
+
 def reconcile_metric_alerts(db: Session, device_ids: Optional[Iterable[int]] = None) -> int:
     """按最新 DeviceMetric 关闭已经恢复的设备指标告警；离线告警由采集器单独处理。"""
     query = db.query(Alert).filter(

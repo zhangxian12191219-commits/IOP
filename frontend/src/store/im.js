@@ -5,7 +5,7 @@
  * 和 WebSocket 会继续在后台运行。
  */
 import { computed, reactive, ref, shallowRef } from 'vue'
-import { ElMessage } from 'element-plus'
+import { ElMessage, ElNotification } from 'element-plus'
 import { imApi } from '@/api'
 import { currentUser, getToken } from '@/store/auth'
 import { playCallRingtone, playMessageSound, stopCallRingtone } from '@/utils/alertSound'
@@ -97,11 +97,13 @@ export const imState = reactive({
   whiteboard: {
     open: false,
     groupId: null,
+    peerId: null,
     boardId: 'main',
     strokes: [],
     loading: false,
   },
   whiteboardPointers: {},
+  whiteboardInvite: null,
   typing: false,
   preferences: { ...DEFAULT_PREFERENCES, shortcuts: [...DEFAULT_PREFERENCES.shortcuts] },
   preferencesLoaded: false,
@@ -146,6 +148,7 @@ export function toggleImMessageSound(value = !imMessageSoundEnabled.value) {
 let socket = null
 let reconnectTimer = null
 let manualClose = false
+const pendingSocketMessages = []
 let preferenceTimer = null
 let connectPromise = null
 let callTimeout = null
@@ -211,13 +214,17 @@ function wsUrl() {
 }
 
 function sendSocket(payload) {
-  if (!socket || socket.readyState !== WebSocket.OPEN) return false
-  socket.send(JSON.stringify(payload))
-  return true
+  if (socket && socket.readyState === WebSocket.OPEN) {
+    socket.send(JSON.stringify(payload))
+    return true
+  }
+  pendingSocketMessages.push(payload)
+  openSocket()
+  return false
 }
 
 function upsertIncomingMessage(message) {
-  if (!message) return
+  if (!message || message.message_type === 'whiteboard') return
   if (imState.messages.some((item) => item.id === message.id)) return
   imState.messages.push(message)
   imState.messages.sort((a, b) => String(a.created_at || '').localeCompare(String(b.created_at || '')))
@@ -261,7 +268,12 @@ function handleSocketMessage(payload) {
     handleGroupIncomingMessage(payload)
     return
   }
-  // ---- 群白板 ----
+  // ---- 白板协作邀请 ----
+  if (payload.type === 'whiteboard-active') {
+    handleWhiteboardActive(payload)
+    return
+  }
+  // ---- 白板状态 ----
   if (payload.type === 'whiteboard-state') {
     handleWhiteboardState(payload)
     return
@@ -271,13 +283,13 @@ function handleSocketMessage(payload) {
     return
   }
   if (payload.type === 'whiteboard-clear') {
-    if (imState.whiteboard.open && Number(payload.group_id) === imState.whiteboard.groupId) {
+    if (whiteboardMatches(payload)) {
       imState.whiteboard.strokes = []
     }
     return
   }
   if (payload.type === 'whiteboard-undo') {
-    if (imState.whiteboard.open && Number(payload.group_id) === imState.whiteboard.groupId && payload.stroke_id) {
+    if (whiteboardMatches(payload) && payload.stroke_id) {
       imState.whiteboard.strokes = imState.whiteboard.strokes.filter((stroke) => stroke.id !== payload.stroke_id)
     }
     return
@@ -514,7 +526,7 @@ function handleSocketMessage(payload) {
 /* ==================== 群聊消息 ==================== */
 
 function upsertGroupMessage(message) {
-  if (!message) return
+  if (!message || message.message_type === 'whiteboard') return
   const index = imState.groupMessages.findIndex((item) => item.id === message.id)
   if (index >= 0) {
     imState.groupMessages.splice(index, 1, message)
@@ -980,7 +992,7 @@ export async function openGroupConversation(groupId) {
   imState.typing = false
   delete imState.groupTyping[id]
   const res = await imApi.groupMessages(id)
-  imState.groupMessages = res.data?.items || []
+  imState.groupMessages = (res.data?.items || []).filter((item) => item.message_type !== 'whiteboard')
   const fresh = res.data?.group
   if (fresh) {
     const index = imState.groups.findIndex((group) => group.id === id)
@@ -1069,19 +1081,25 @@ function upsertWhiteboardStroke(stroke, replaceSameTemp = true) {
   imState.whiteboard.strokes = list
 }
 
+function whiteboardMatches(payload) {
+  if (!imState.whiteboard.open) return false
+  if (imState.whiteboard.peerId) return Number(payload.peer_id) === imState.whiteboard.peerId
+  return Number(payload.group_id) === imState.whiteboard.groupId
+}
+
 function handleWhiteboardState(payload) {
-  if (!imState.whiteboard.open || Number(payload.group_id) !== imState.whiteboard.groupId) return
+  if (!whiteboardMatches(payload)) return
   imState.whiteboard.strokes = payload.strokes || []
   if (payload.board_id) imState.whiteboard.boardId = payload.board_id
 }
 
 function handleWhiteboardStrokeEvent(payload) {
-  if (!imState.whiteboard.open || Number(payload.group_id) !== imState.whiteboard.groupId) return
+  if (!whiteboardMatches(payload)) return
   upsertWhiteboardStroke(payload.stroke)
 }
 
 function showWhiteboardPointer(payload) {
-  if (!imState.whiteboard.open || Number(payload.group_id) !== imState.whiteboard.groupId) return
+  if (!whiteboardMatches(payload)) return
   const userId = Number(payload.from?.id)
   if (!userId || userId === meId.value) return
   imState.whiteboardPointers[userId] = {
@@ -1097,18 +1115,62 @@ function showWhiteboardPointer(payload) {
   }, 3000))
 }
 
-export async function openWhiteboard(groupId) {
-  const id = Number(groupId)
-  if (!id) return
+let lastWhiteboardInviteAt = 0
+
+function handleWhiteboardActive(payload) {
+  const gid = Number(payload.group_id) || null
+  const pid = Number(payload.peer_id) || null
+  if (!gid && !pid) return
+  const alreadyOpen = imState.whiteboard.open && (
+    pid ? Number(imState.whiteboard.peerId) === pid : Number(imState.whiteboard.groupId) === gid
+  )
+  if (alreadyOpen) return
+  const now = Date.now()
+  if (now - lastWhiteboardInviteAt < 2500) return
+  lastWhiteboardInviteAt = now
+  const fromName = payload.from?.real_name || payload.from?.username || '对方'
+  imState.whiteboardInvite = {
+    groupId: gid,
+    peerId: pid,
+    fromName,
+    at: now,
+  }
+  ElNotification({
+    title: '白板协作',
+    message: `${fromName} 正在使用白板，点击加入后可以实时查看和共同编辑`,
+    type: 'success',
+    duration: 12000,
+    onClick: () => joinWhiteboardInvite(),
+  })
+}
+
+export function joinWhiteboardInvite() {
+  const invite = imState.whiteboardInvite
+  if (!invite) return
+  imState.whiteboardInvite = null
+  openWhiteboard(invite.groupId, invite.peerId)
+}
+
+export function dismissWhiteboardInvite() {
+  imState.whiteboardInvite = null
+}
+
+export async function openWhiteboard(groupId = null, peerId = null) {
+  const gid = Number(groupId) || null
+  const pid = gid ? null : (Number(peerId) || null)
+  if (!gid && !pid) return
+  const direct = !gid && Boolean(pid)
+  imState.whiteboardInvite = null
   imState.whiteboard.open = true
-  imState.whiteboard.groupId = id
+  imState.whiteboard.groupId = gid
+  imState.whiteboard.peerId = pid
   imState.whiteboard.boardId = 'main'
   imState.whiteboard.strokes = []
   imState.whiteboard.loading = true
   resetWhiteboardPointers()
   try {
-    const res = await imApi.groupWhiteboard(id)
-    if (imState.whiteboard.open && imState.whiteboard.groupId === id) {
+    const res = direct ? await imApi.directWhiteboard(pid) : await imApi.groupWhiteboard(gid)
+    if (imState.whiteboard.open && (direct ? imState.whiteboard.peerId === pid : imState.whiteboard.groupId === gid)) {
       imState.whiteboard.strokes = res.data?.strokes || []
       imState.whiteboard.boardId = res.data?.board_id || 'main'
     }
@@ -1117,12 +1179,19 @@ export async function openWhiteboard(groupId) {
   } finally {
     imState.whiteboard.loading = false
   }
-  sendSocket({ type: 'whiteboard-sync', group_id: id, board_id: imState.whiteboard.boardId })
+  sendSocket({
+    type: 'whiteboard-sync',
+    group_id: gid || undefined,
+    peer_id: pid || undefined,
+    board_id: imState.whiteboard.boardId,
+  })
 }
 
 export function closeWhiteboard() {
   imState.whiteboard.open = false
   imState.whiteboard.groupId = null
+  imState.whiteboard.peerId = null
+  imState.whiteboardInvite = null
   imState.whiteboard.strokes = []
   imState.whiteboard.loading = false
   resetWhiteboardPointers()
@@ -1137,7 +1206,8 @@ export function sendWhiteboardStroke(stroke) {
   upsertWhiteboardStroke(outgoing)
   sendSocket({
     type: 'whiteboard-draw',
-    group_id: imState.whiteboard.groupId,
+    group_id: imState.whiteboard.groupId || undefined,
+    peer_id: imState.whiteboard.peerId || undefined,
     board_id: imState.whiteboard.boardId,
     stroke: outgoing,
   })
@@ -1148,7 +1218,8 @@ export function undoWhiteboard() {
   if (!imState.whiteboard.open) return
   sendSocket({
     type: 'whiteboard-undo',
-    group_id: imState.whiteboard.groupId,
+    group_id: imState.whiteboard.groupId || undefined,
+    peer_id: imState.whiteboard.peerId || undefined,
     board_id: imState.whiteboard.boardId,
   })
 }
@@ -1158,7 +1229,8 @@ export function clearWhiteboard() {
   imState.whiteboard.strokes = []
   sendSocket({
     type: 'whiteboard-clear',
-    group_id: imState.whiteboard.groupId,
+    group_id: imState.whiteboard.groupId || undefined,
+    peer_id: imState.whiteboard.peerId || undefined,
     board_id: imState.whiteboard.boardId,
   })
 }
@@ -1170,7 +1242,8 @@ export function sendWhiteboardPointer(x, y, visible = true) {
   lastWhiteboardPointerAt = now
   sendSocket({
     type: 'whiteboard-pointer',
-    group_id: imState.whiteboard.groupId,
+    group_id: imState.whiteboard.groupId || undefined,
+    peer_id: imState.whiteboard.peerId || undefined,
     board_id: imState.whiteboard.boardId,
     x,
     y,
@@ -1188,6 +1261,14 @@ async function openSocket() {
     socket.onopen = () => {
       imState.connected = true
       imState.connecting = false
+      while (pendingSocketMessages.length) {
+        const payload = pendingSocketMessages.shift()
+        try {
+          socket.send(JSON.stringify(payload))
+        } catch {
+          /* 忽略单条发送失败，继续发送后续消息 */
+        }
+      }
     }
     socket.onmessage = (event) => {
       try {
@@ -1303,7 +1384,7 @@ export async function openConversation(peerId) {
   imState.activeGroupId = null
   imState.typing = false
   const res = await imApi.messages(id)
-  imState.messages = res.data?.items || []
+  imState.messages = (res.data?.items || []).filter((item) => item.message_type !== 'whiteboard')
   imState.retentionDays = Number(res.data?.retention_days || imState.retentionDays || 15)
   imState.unread[id] = 0
   sendSocket({ type: 'read', peer_id: id })

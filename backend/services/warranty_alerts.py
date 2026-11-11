@@ -15,6 +15,7 @@ from sqlalchemy.orm import Session
 
 from ..models.models import Alert, Device
 from ..models.room import Cabinet, Room
+from .alert_recovery import build_generic_recovery_payload
 
 WARRANTY_WARNING_DAYS = 5
 WARRANTY_CRITICAL_DAYS = 3
@@ -77,8 +78,23 @@ def check_warranty_alerts(
         days_left = _days_left(device)
         if days_left is None or days_left > WARRANTY_WARNING_DAYS:
             for alert in active:
-                alert.resolved_at = datetime.utcnow()
+                recovered_at = datetime.utcnow()
+                alert.resolved_at = recovered_at
                 alert.resolution = "warranty_no_longer_expiring"
+                notifications.append(build_generic_recovery_payload(
+                    source="device",
+                    alert_id=alert.id,
+                    name=device.name,
+                    ip_address=device.ip_address,
+                    alert_type="warranty",
+                    message=alert.message,
+                    level=alert.alert_level,
+                    value=days_left,
+                    threshold=alert.threshold,
+                    recovered_at=recovered_at,
+                    original_created_at=alert.created_at,
+                    extra=_location_context(db, device),
+                ))
             continue
 
         is_critical = days_left <= WARRANTY_CRITICAL_DAYS

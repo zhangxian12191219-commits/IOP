@@ -555,6 +555,11 @@ class DataCollector:
             alert.resolution = "device_recovered"
         self.db.commit()
         invalidate_dashboard()
+        for alert in alerts:
+            try:
+                notify_alert(build_recovery_payload(alert, device, None, None, now))
+            except Exception:  # noqa: BLE001
+                logger.exception("发送离线恢复通知失败: %s", alert.id)
         logger.info("设备 %s 已恢复，自动关闭离线告警 %s 条", device.ip_address, len(alerts))
         return len(alerts)
 
@@ -1518,22 +1523,16 @@ class DataCollector:
         )
         if not faults:
             if active:
-                active.resolved_at = datetime.utcnow()
+                recovered_at = datetime.utcnow()
+                active.resolved_at = recovered_at
                 active.resolution = "storage_disk_recovered"
                 active.is_acknowledged = True
                 self.db.commit()
                 invalidate_dashboard()
                 try:
-                    notify_alert({
-                        "source": "device",
-                        "source_id": active.id,
-                        "level": "info",
-                        "device_name": device.name,
-                        "ip_address": device.ip_address,
-                        "alert_type": "storage_disk_fault",
-                        "message": f"{device.name} 存储磁盘故障已恢复",
-                        "created_at": datetime.utcnow().isoformat(timespec="seconds"),
-                    })
+                    notify_alert(build_recovery_payload(
+                        active, device, None, None, recovered_at,
+                    ))
                 except Exception:  # noqa: BLE001
                     logger.exception("发送存储磁盘恢复通知失败: %s", active.id)
             return

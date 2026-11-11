@@ -110,23 +110,28 @@ async def send_email(cfg: Dict[str, Any], subject: str, body: str) -> None:
 # ==================== Webhook ====================
 def _webhook_body(template: str, title: str, text: str, payload: Dict[str, Any]) -> Dict[str, Any]:
     tpl = (template or "generic").lower()
+    recovery = bool(payload.get("recovery"))
+    event_label = "恢复" if recovery else "告警"
+    event_color = "#22c55e" if recovery else "#ef4444"
+    event_marker = "🟢" if recovery else "🔴"
+    marked_title = f"{event_marker} {title}"
     if tpl == "dingtalk":
         return {
             "msgtype": "markdown",
-            "markdown": {"title": title, "text": f"### {title}\n\n{text}"},
+            "markdown": {"title": marked_title, "text": f"### {marked_title}\n\n{text}"},
         }
     if tpl == "wecom":
         return {
             "msgtype": "markdown",
-            "markdown": {"content": f"### {title}\n\n{text}"},
+            "markdown": {"content": f"### {marked_title}\n\n{text}"},
         }
     if tpl == "feishu":
-        return {"msg_type": "text", "content": {"text": f"{title}\n{text}"}}
+        return {"msg_type": "text", "content": {"text": f"{marked_title}\n{text}"}}
     if tpl == "slack":
-        return {"text": f"*{title}*\n{text}"}
-    # generic：结构化数据，便于对接自建系统
+        return {"text": f"{event_marker} *{title}*\n{text}"}
+    # generic：结构化数据，便于对接自建系统；颜色字段供支持富文本的接收端使用
     return {
-        "title": title,
+        "title": marked_title,
         "text": text,
         "level": payload.get("level"),
         "source": payload.get("source"),
@@ -140,6 +145,14 @@ def _webhook_body(template: str, title: str, text: str, payload: Dict[str, Any])
         "value": payload.get("value"),
         "threshold": payload.get("threshold"),
         "created_at": payload.get("created_at"),
+        "message_type": "recovery" if recovery else "alert",
+        "event_type": "recovery" if recovery else "alert",
+        "event_label": event_label,
+        "event_color": event_color,
+        "color": event_color,
+        "recovery": recovery,
+        "recovered_at": payload.get("recovered_at"),
+        "original_created_at": payload.get("original_created_at"),
     }
 
 
@@ -221,6 +234,10 @@ async def send_upstream(
         "text": text,
         "message": payload.get("message") or text,
         "created_at": payload.get("created_at"),
+        "recovered_at": payload.get("recovered_at"),
+        "original_created_at": payload.get("original_created_at"),
+        "message_type": "recovery" if payload.get("recovery") else "alert",
+        "event_type": "recovery" if payload.get("recovery") else "alert",
         "recovery": bool(payload.get("recovery")),
         "test": bool(payload.get("test")),
     }

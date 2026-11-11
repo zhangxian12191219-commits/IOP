@@ -15,6 +15,7 @@ from sqlalchemy.orm import Session
 from .monitor import WebsiteMonitor
 from ..models.website import WebsiteTarget, WebsiteCheckHistory, WebsiteAlert
 from ..notify import notify_alert
+from ..services.alert_recovery import build_generic_recovery_payload
 from ..services import alert_suppression
 
 logger = logging.getLogger(__name__)
@@ -180,7 +181,24 @@ class WebsiteScheduler:
         recovered = self._recover_alerts(target, is_alive, response_time, cert_info)
         self.db.commit()
         if recovered:
-            logger.info("网站 %s 已恢复，自动关闭告警 %s 条", target.name, recovered)
+            logger.info("网站 %s 已恢复，自动关闭告警 %s 条", target.name, len(recovered))
+            for recovered_alert in recovered:
+                try:
+                    notify_alert(build_generic_recovery_payload(
+                        source="website",
+                        alert_id=recovered_alert.id,
+                        name=target.name,
+                        ip_address=target.domain or target.ip_address or "",
+                        alert_type=recovered_alert.alert_type,
+                        message=recovered_alert.message,
+                        level=recovered_alert.alert_level,
+                        value=recovered_alert.value,
+                        threshold=recovered_alert.threshold,
+                        recovered_at=recovered_alert.resolved_at,
+                        original_created_at=recovered_alert.created_at,
+                    ))
+                except Exception:  # noqa: BLE001
+                    logger.exception("发送网站恢复通知失败: %s", recovered_alert.id)
 
         # 告警通知（异步，不阻塞探测）
         for alert in new_alerts:
@@ -203,8 +221,8 @@ class WebsiteScheduler:
         self._trim_history(target.id)
 
     def _recover_alerts(self, target: WebsiteTarget, is_alive: bool,
-                        response_time, cert_info) -> int:
-        """网站恢复后自动关闭未恢复的 down/slow/ssl_expired 告警。"""
+                        response_time, cert_info) -> list:
+        """网站恢复后自动关闭未恢复的 down/slow/ssl_expired 告警，并返回关闭的记录。"""
         now = datetime.utcnow()
         recovered_types: list[str] = []
         if is_alive:
@@ -215,7 +233,7 @@ class WebsiteScheduler:
         if self._cert_is_healthy(target, cert_info):
             recovered_types.append("ssl_expired")
         if not recovered_types:
-            return 0
+            return []
         alerts = self.db.query(WebsiteAlert).filter(
             WebsiteAlert.target_id == target.id,
             WebsiteAlert.alert_type.in_(recovered_types),
@@ -225,7 +243,7 @@ class WebsiteScheduler:
             alert.is_acknowledged = True
             alert.resolved_at = now
             alert.resolution = "auto_recovered"
-        return len(alerts)
+        return alerts
 
     def _cert_is_healthy(self, target: WebsiteTarget, cert_info) -> bool:
         """证书告警可恢复：证书监控关闭，或当前所有证书都高于到期阈值。"""

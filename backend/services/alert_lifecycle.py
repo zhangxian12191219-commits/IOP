@@ -14,7 +14,12 @@ from sqlalchemy.orm import Session
 from ..models.models import Alert, Device, DeviceMetric
 from ..models.virtualization import VirtualizationAlert, VirtualMachine
 from ..models.website import WebsiteAlert, WebsiteCheckHistory, WebsiteTarget
-from .alert_recovery import reconcile_metric_alerts
+from ..notify import notify_alert_sync
+from .alert_recovery import (
+    build_generic_recovery_payload,
+    build_recovery_payload,
+    reconcile_metric_alerts,
+)
 from .cache import invalidate_dashboard
 
 logger = logging.getLogger(__name__)
@@ -152,8 +157,95 @@ def _reconcile_storage_disks(db: Session) -> int:
     return count
 
 
+def _notify_lifecycle_recoveries(db: Session, since: datetime) -> None:
+    """对本次对账新关闭的网站/虚拟化/存储告警发送恢复通知。
+
+    设备指标恢复在 reconcile_metric_alerts 中已经发送；这里重复发送时由
+    NotificationLog 的负 source_id 去重，不会产生重复消息。
+    """
+    skip_reasons = {
+        "manual_deleted", "false_positive_cleanup",
+        "superseded_by_custom_rule", "realert_superseded",
+        # 设备指标恢复已由 reconcile_metric_alerts 单独发送，避免异步任务竞态重复。
+        "metric_recovered",
+    }
+
+    device_rows = (
+        db.query(Alert)
+        .filter(Alert.resolved_at.isnot(None), Alert.resolved_at >= since)
+        .all()
+    )
+    device_ids = {row.device_id for row in device_rows if row.device_id}
+    devices = {
+        row.id: row
+        for row in db.query(Device).filter(Device.id.in_(device_ids)).all()
+    } if device_ids else {}
+    for alert in device_rows:
+        if (alert.resolution or "") in skip_reasons:
+            continue
+        try:
+            notify_alert_sync(build_recovery_payload(
+                alert, devices.get(alert.device_id), None, alert.value, alert.resolved_at,
+            ))
+        except Exception:  # noqa: BLE001
+            logger.exception("发送设备恢复通知失败: %s", alert.id)
+
+    website_rows = (
+        db.query(WebsiteAlert)
+        .filter(WebsiteAlert.resolved_at.isnot(None), WebsiteAlert.resolved_at >= since)
+        .all()
+    )
+    target_ids = {row.target_id for row in website_rows if row.target_id}
+    targets = {
+        row.id: row
+        for row in db.query(WebsiteTarget).filter(WebsiteTarget.id.in_(target_ids)).all()
+    } if target_ids else {}
+    for alert in website_rows:
+        if (alert.resolution or "") in skip_reasons:
+            continue
+        target = targets.get(alert.target_id)
+        name = target.name if target else f"网站#{alert.target_id}"
+        address = (target.domain or target.ip_address or "") if target else ""
+        try:
+            notify_alert_sync(build_generic_recovery_payload(
+                source="website", alert_id=alert.id, name=name,
+                ip_address=address, alert_type=alert.alert_type,
+                message=alert.message, level=alert.alert_level,
+                value=alert.value, threshold=alert.threshold,
+                recovered_at=alert.resolved_at,
+                original_created_at=alert.created_at,
+            ))
+        except Exception:  # noqa: BLE001
+            logger.exception("发送网站恢复通知失败: %s", alert.id)
+
+    vm_rows = (
+        db.query(VirtualizationAlert)
+        .filter(
+            VirtualizationAlert.resolved_at.isnot(None),
+            VirtualizationAlert.resolved_at >= since,
+        )
+        .all()
+    )
+    for alert in vm_rows:
+        if (alert.resolution or "") in skip_reasons:
+            continue
+        name = alert.vm_name or alert.platform_name or f"虚拟化告警#{alert.id}"
+        try:
+            notify_alert_sync(build_generic_recovery_payload(
+                source="virtualization", alert_id=alert.id, name=name,
+                ip_address="", alert_type=alert.alert_type,
+                message=alert.message, level=alert.alert_level,
+                value=alert.value, threshold=alert.threshold,
+                recovered_at=alert.resolved_at,
+                original_created_at=alert.created_at,
+            ))
+        except Exception:  # noqa: BLE001
+            logger.exception("发送虚拟化恢复通知失败: %s", alert.id)
+
+
 def reconcile_active_alerts(db: Session) -> int:
     """关闭所有条件已消失的活动告警；返回关闭数量。"""
+    started_at = datetime.utcnow()
     count = 0
     try:
         count += reconcile_metric_alerts(db)
@@ -169,5 +261,6 @@ def reconcile_active_alerts(db: Session) -> int:
     if count:
         db.commit()
         invalidate_dashboard()
+        _notify_lifecycle_recoveries(db, started_at)
         logger.info("活动告警条件对账已关闭 %s 条", count)
     return count

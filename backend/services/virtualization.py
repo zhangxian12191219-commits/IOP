@@ -137,6 +137,8 @@ def _port(platform: VirtualPlatform) -> int:
         return _int(platform.port, 2375)
     if platform.platform_type == "kubernetes":
         return _int(platform.port, 6443)
+    if platform.platform_type == "openstack":
+        return _int(platform.port, 5000)
     return _int(platform.port, 22)
 
 
@@ -1708,6 +1710,373 @@ class KubernetesAdapter:
         }
 
 
+
+class OpenStackAdapter:
+    """OpenStack Keystone v3 + Nova/Cinder 只读采集。
+
+    只调用认证、hypervisor、server、flavor 和 volume 查询接口，
+    不执行创建、删除、开关机、迁移等任何写操作。
+    虚拟机实时 CPU/内存使用率需要 Ceilometer/Gnocchi；未配置时保持为空。
+    """
+
+    def __init__(self, platform: VirtualPlatform, password: str):
+        self.platform = platform
+        self.password = password
+        scheme, host, port = _http_base(platform, 5000, "https")
+        self.scheme = scheme
+        self.host = host
+        self.port = port
+        self.base_url = f"{scheme}://{host}:{port}"
+        self.project = str(platform.project_name or "").strip()
+        self.domain = str(platform.domain_name or "Default").strip() or "Default"
+        self.token = ""
+        self.catalog: List[Dict[str, Any]] = []
+        self.compute_url = ""
+        self.volume_url = ""
+        handlers = []
+        if scheme == "https" and not platform.verify_tls:
+            handlers.append(urllib.request.HTTPSHandler(context=ssl._create_unverified_context()))
+        self.opener = urllib.request.build_opener(*handlers)
+
+    def _headers(self, token: bool = True) -> Dict[str, str]:
+        headers = {
+            "Accept": "application/json",
+            "User-Agent": "SNMP-NMS-OpenStack-Adapter/1.0",
+        }
+        if token and self.token:
+            headers["X-Auth-Token"] = self.token
+        return headers
+
+    def _open(self, request: urllib.request.Request, timeout: int = 30):
+        try:
+            return self.opener.open(request, timeout=timeout)
+        except urllib.error.HTTPError as exc:
+            detail = ""
+            try:
+                detail = exc.read().decode("utf-8", errors="replace")[:800]
+            except Exception:  # noqa: BLE001
+                pass
+            if exc.code == 401:
+                raise VirtualizationError("OpenStack 认证失败，请检查用户名、密码、域和项目") from exc
+            if exc.code == 403:
+                raise VirtualizationError("OpenStack 账号权限不足，需要 hypervisor/server/flavor 只读权限") from exc
+            raise VirtualizationError(f"OpenStack 接口错误 HTTP {exc.code}: {detail or str(exc)}") from exc
+        except urllib.error.URLError as exc:
+            raise VirtualizationError(f"OpenStack 连接失败: {exc.reason}") from exc
+
+    def authenticate(self) -> Dict[str, Any]:
+        if not self.project:
+            raise VirtualizationError("OpenStack 必须填写项目/租户")
+        payload = {
+            "auth": {
+                "identity": {
+                    "methods": ["password"],
+                    "password": {
+                        "user": {
+                            "name": self.platform.username,
+                            "domain": {"name": self.domain},
+                            "password": self.password,
+                        }
+                    },
+                },
+                "scope": {
+                    "project": {
+                        "name": self.project,
+                        "domain": {"name": self.domain},
+                    }
+                },
+            }
+        }
+        body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+        last_error: Optional[Exception] = None
+        for path in ("/v3/auth/tokens", "/identity/v3/auth/tokens"):
+            request = urllib.request.Request(
+                self.base_url + path,
+                data=body,
+                headers={"Content-Type": "application/json", "Accept": "application/json",
+                         "User-Agent": "SNMP-NMS-OpenStack-Adapter/1.0"},
+                method="POST",
+            )
+            try:
+                with self._open(request, timeout=30) as response:
+                    raw = response.read()
+                    headers = dict(response.headers)
+            except VirtualizationError as exc:
+                last_error = exc
+                # 根路径不存在时兼容 /identity 前缀的 Keystone
+                if "HTTP 404" in str(exc):
+                    continue
+                raise
+            text = raw.decode("utf-8", errors="replace")
+            data = json.loads(text) if text.strip() else {}
+            token = headers.get("X-Subject-Token") or headers.get("x-subject-token")
+            if not token:
+                raise VirtualizationError("OpenStack 认证返回缺少 X-Subject-Token")
+            self.token = token
+            token_data = data.get("token") or {}
+            self.catalog = token_data.get("catalog") or []
+            self.compute_url = self._service_url("compute")
+            self.volume_url = self._service_url("volumev3") or self._service_url("volumev2") or self._service_url("volume")
+            return token_data
+        raise last_error or VirtualizationError("OpenStack Keystone 认证失败")
+
+    def _service_url(self, service_type: str) -> str:
+        for service in self.catalog:
+            if str(service.get("type") or "") != service_type:
+                continue
+            endpoints = service.get("endpoints") or []
+            # 优先内网 endpoint；没有内网再使用 public
+            for interface in ("internal", "public", "admin"):
+                for endpoint in endpoints:
+                    if str(endpoint.get("interface") or "") == interface and endpoint.get("url"):
+                        return str(endpoint["url"]).rstrip("/")
+        return ""
+
+    def _request(self, path: str, base: Optional[str] = None, params: Optional[Dict[str, Any]] = None) -> Any:
+        base_url = (base or self.compute_url or "").rstrip("/")
+        if not base_url:
+            raise VirtualizationError("OpenStack 服务目录缺少对应 endpoint")
+        url = base_url + path
+        if params:
+            url += "?" + urllib.parse.urlencode(params)
+        request = urllib.request.Request(url, headers=self._headers(), method="GET")
+        with self._open(request, timeout=30) as response:
+            raw = response.read()
+        text = raw.decode("utf-8", errors="replace")
+        try:
+            return json.loads(text) if text.strip() else {}
+        except ValueError as exc:
+            raise VirtualizationError("OpenStack 返回内容不是有效 JSON") from exc
+
+    def test(self) -> Dict[str, Any]:
+        token_data = self.authenticate()
+        project = token_data.get("project") or {}
+        server_data = self._request("/servers/detail", params={"limit": 1})
+        hypervisor_data = None
+        try:
+            hypervisor_data = self._request("/os-hypervisors/detail", params={"limit": 1})
+        except VirtualizationError:
+            pass
+        return {
+            "platform": "openstack",
+            "version": "OpenStack Keystone v3",
+            "hostname": self.host,
+            "address": self.base_url,
+            "project": project.get("name") or self.project,
+            "domain": self.domain,
+            "servers_visible": len(server_data.get("servers") or []),
+            "hypervisors_visible": len((hypervisor_data or {}).get("hypervisors") or []),
+        }
+
+    def _hypervisors(self) -> List[Dict[str, Any]]:
+        data = self._request("/os-hypervisors/detail")
+        rows = data.get("hypervisors") or []
+        return rows if isinstance(rows, list) else []
+
+    def _flavors(self) -> Dict[str, Dict[str, Any]]:
+        try:
+            data = self._request("/flavors/detail")
+        except VirtualizationError:
+            return {}
+        return {
+            str(item.get("id")): item
+            for item in (data.get("flavors") or [])
+            if item.get("id")
+        }
+
+    def _volumes(self) -> Dict[str, Dict[str, Any]]:
+        if not self.volume_url:
+            return {}
+        try:
+            data = self._request("/volumes/detail", base=self.volume_url)
+        except VirtualizationError:
+            return {}
+        return {
+            str(item.get("id")): item
+            for item in (data.get("volumes") or [])
+            if item.get("id")
+        }
+
+    def _servers(self) -> List[Dict[str, Any]]:
+        servers: List[Dict[str, Any]] = []
+        marker = None
+        for _ in range(50):
+            params: Dict[str, Any] = {"limit": 500}
+            if marker:
+                params["marker"] = marker
+            data = self._request("/servers/detail", params=params)
+            page = data.get("servers") or []
+            if not isinstance(page, list) or not page:
+                break
+            servers.extend(page)
+            if len(page) < 500:
+                break
+            marker = page[-1].get("id")
+            if not marker:
+                break
+        return servers
+
+    def _build_hosts(self, servers: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        hosts: List[Dict[str, Any]] = []
+        for item in self._hypervisors():
+            name = str(item.get("hypervisor_hostname") or item.get("service_host") or item.get("id") or "").strip()
+            if not name:
+                continue
+            vcpus = _int(item.get("vcpus"), 0)
+            used_vcpus = _int(item.get("vcpus_used"), 0)
+            memory_total = _int(item.get("memory_mb"), 0)
+            memory_used = _int(item.get("memory_mb_used"), 0)
+            storage_total = _int(item.get("local_gb"), 0)
+            storage_used = _int(item.get("local_gb_used"), 0)
+            state = str(item.get("state") or "").lower()
+            status = str(item.get("status") or "").lower()
+            online = state == "up" and status in ("", "enabled")
+            cpu_info = item.get("cpu_info") or {}
+            cpu_model = ""
+            if isinstance(cpu_info, dict):
+                cpu_model = str(cpu_info.get("model") or cpu_info.get("vendor") or "")
+            elif isinstance(cpu_info, str):
+                try:
+                    parsed = json.loads(cpu_info)
+                    cpu_model = str(parsed.get("model") or "")
+                except (TypeError, ValueError):
+                    cpu_model = cpu_info[:120]
+            hosts.append({
+                "external_id": name,
+                "name": name,
+                "ip_address": str(item.get("host_ip") or item.get("service_host") or name)[:45],
+                "cluster_name": str(item.get("availability_zone") or "OpenStack"),
+                "status": "online" if online else "offline",
+                "cpu_model": cpu_model or "OpenStack Compute Node",
+                "cpu_cores": vcpus,
+                "cpu_mhz": 0.0,
+                "cpu_usage": _percent(used_vcpus, vcpus),
+                "memory_total_mb": memory_total,
+                "memory_used_mb": memory_used,
+                "memory_usage": _percent(memory_used, memory_total),
+                "storage_total_gb": storage_total,
+                "storage_used_gb": storage_used,
+                "storage_usage": _percent(storage_used, storage_total),
+                "vm_count": _int(item.get("running_vms"), 0),
+                "uptime_seconds": 0,
+                "extra": {
+                    "hypervisor_type": item.get("hypervisor_type") or "",
+                    "state": item.get("state") or "",
+                    "status": item.get("status") or "",
+                    "running_vms": item.get("running_vms") or 0,
+                },
+            })
+        if hosts:
+            return hosts
+        # 权限不足读取 hypervisor 时，至少按虚拟机的宿主机字段建立占位宿主机
+        seen = {}
+        for server in servers:
+            name = str(server.get("OS-EXT-SRV-ATTR:host") or server.get("OS-EXT-SRV-ATTR:hypervisor_hostname") or "").strip()
+            if not name:
+                continue
+            seen[name] = seen.get(name, 0) + 1
+        return [{
+            "external_id": name,
+            "name": name,
+            "ip_address": name[:45],
+            "cluster_name": "OpenStack",
+            "status": "online",
+            "cpu_model": "OpenStack Compute Node",
+            "vm_count": count,
+            "extra": {"source": "server_host"},
+        } for name, count in sorted(seen.items())]
+
+    def _vm_power_state(self, status: Any) -> str:
+        raw = str(status or "").strip().upper()
+        if raw in ("ACTIVE", "RUNNING"):
+            return "running"
+        if raw in ("SHUTOFF", "STOPPED", "OFF"):
+            return "stopped"
+        if raw in ("PAUSED", "SUSPENDED"):
+            return "paused"
+        return "unknown"
+
+    def _build_vms(self, servers: List[Dict[str, Any]], hosts: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        flavors = self._flavors()
+        volumes = self._volumes()
+        host_names = {str(item.get("name") or "") for item in hosts}
+        vms: List[Dict[str, Any]] = []
+        for server in servers:
+            ext = str(server.get("id") or "")
+            if not ext:
+                continue
+            flavor = server.get("flavor") or {}
+            flavor_id = str(flavor.get("id") or "")
+            detail = flavors.get(flavor_id) or flavor
+            vcpu = _int(detail.get("vcpus"), 0)
+            memory_mb = _int(detail.get("ram"), 0)
+            disk_total = _int(detail.get("disk"), 0)
+            addresses = server.get("addresses") or {}
+            ips: List[str] = []
+            if isinstance(addresses, dict):
+                for values in addresses.values():
+                    for row in (values or []):
+                        addr = str((row or {}).get("addr") or "").strip()
+                        if addr and addr not in ips:
+                            ips.append(addr)
+            attached = server.get("os-extended-volumes:volumes_attached") or []
+            for volume in attached:
+                volume_info = volumes.get(str((volume or {}).get("id") or ""))
+                if volume_info and not disk_total:
+                    disk_total += _int(volume_info.get("size"), 0)
+            host_name = str(
+                server.get("OS-EXT-SRV-ATTR:host")
+                or server.get("OS-EXT-SRV-ATTR:hypervisor_hostname")
+                or ""
+            ).strip()
+            if host_name and host_name not in host_names and host_name not in {item.get("external_id") for item in hosts}:
+                host_name = ""
+            meta = server.get("metadata") or {}
+            guest_os = str(meta.get("os_type") or meta.get("os_distro") or meta.get("os_version") or "OpenStack 虚拟机")
+            vms.append({
+                "external_id": ext,
+                "name": str(server.get("name") or ext),
+                "power_state": self._vm_power_state(server.get("status")),
+                "vcpu": vcpu,
+                "memory_mb": memory_mb,
+                "disk_total_gb": disk_total,
+                "disk_used_gb": 0,
+                "disk_usage": None,
+                "nic_count": len(ips),
+                "ip_addresses": ips,
+                "guest_os": guest_os,
+                "tools_status": "",
+                "cpu_usage": None,
+                "memory_usage": None,
+                "net_rx_bps": 0,
+                "net_tx_bps": 0,
+                "host_name": host_name,
+                "extra": {
+                    "availability_zone": server.get("OS-EXT-AZ:availability_zone") or "",
+                    "flavor_id": flavor_id,
+                    "flavor_name": detail.get("name") or "",
+                    "task_state": server.get("OS-EXT-STS:task_state") or "",
+                    "vm_state": server.get("OS-EXT-STS:vm_state") or "",
+                    "created": server.get("created") or "",
+                    "key_name": server.get("key_name") or "",
+                    "image_id": (server.get("image") or {}).get("id") or "",
+                },
+            })
+        return vms
+
+    def collect(self) -> Dict[str, Any]:
+        token_data = self.authenticate()
+        servers = self._servers()
+        hosts = self._build_hosts(servers)
+        vms = self._build_vms(servers, hosts)
+        return {
+            "hosts": hosts,
+            "vms": vms,
+            "version": "OpenStack Keystone v3",
+            "health": {},
+        }
+
+
 def _adapter_for(platform: VirtualPlatform, password: str):
     if platform.platform_type == "vmware":
         return VMwareAdapter(platform, password)
@@ -1721,6 +2090,8 @@ def _adapter_for(platform: VirtualPlatform, password: str):
         return DockerEngineAdapter(platform, password)
     if platform.platform_type == "kubernetes":
         return KubernetesAdapter(platform, password)
+    if platform.platform_type == "openstack":
+        return OpenStackAdapter(platform, password)
     raise VirtualizationError(f"暂不支持的平台类型：{platform.platform_type}")
 
 

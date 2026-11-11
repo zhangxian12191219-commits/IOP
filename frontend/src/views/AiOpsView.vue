@@ -249,6 +249,95 @@ const aiStatus = ref({
 })
 const overview = ref(null)
 const alertAnalysis = ref(null)
+function escapeReportHtml(value) {
+  return String(value ?? '').replace(/[&<>"']/g, (ch) => ({
+    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
+  }[ch]))
+}
+
+function renderReportInline(value) {
+  return escapeReportHtml(value)
+    .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
+    .replace(/`([^`]+)`/g, '<code>$1</code>')
+    .replace(/\*(.+?)\*/g, '<em>$1</em>')
+}
+
+function splitReportTableRow(line) {
+  return String(line || '').trim().replace(/^\|/, '').replace(/\|$/, '').split('|').map((cell) => cell.trim())
+}
+
+function renderReportHtml(value) {
+  const source = String(value || '').replace(/\r\n/g, '\n').replace(/\r/g, '\n')
+  if (!source.trim()) return '<p class="report-empty">暂无报告内容</p>'
+  const lines = source.split('\n')
+  const output = []
+  let inCode = false
+  let inList = false
+  const closeList = () => {
+    if (inList) {
+      output.push('</ul>')
+      inList = false
+    }
+  }
+  for (let index = 0; index < lines.length; index += 1) {
+    const line = lines[index]
+    if (line.trim().startsWith('```')) {
+      closeList()
+      output.push(inCode ? '</code></pre>' : '<pre><code>')
+      inCode = !inCode
+      continue
+    }
+    if (inCode) {
+      output.push(`${escapeReportHtml(line)}\n`)
+      continue
+    }
+    const heading = line.match(/^(#{1,4})\s+(.+)$/)
+    const item = line.match(/^\s*[-*]\s+(.+)$/)
+    if (heading) {
+      closeList()
+      const level = Math.min(4, heading[1].length + 1)
+      output.push(`<h${level}>${renderReportInline(heading[2])}</h${level}>`)
+      continue
+    }
+    if (item) {
+      if (!inList) {
+        output.push('<ul>')
+        inList = true
+      }
+      output.push(`<li>${renderReportInline(item[1])}</li>`)
+      continue
+    }
+    // Markdown 表格：当前行含 |，下一行是分隔行
+    if (line.includes('|') && index + 1 < lines.length
+      && /^\s*\|?[\s:|-]+\|?\s*$/.test(lines[index + 1])) {
+      closeList()
+      const headers = splitReportTableRow(line)
+      output.push('<table><thead><tr>')
+      headers.forEach((cell) => output.push(`<th>${renderReportInline(cell)}</th>`))
+      output.push('</tr></thead><tbody>')
+      index += 1
+      while (index + 1 < lines.length && lines[index + 1].includes('|')) {
+        index += 1
+        const cells = splitReportTableRow(lines[index])
+        output.push('<tr>')
+        cells.forEach((cell) => output.push(`<td>${renderReportInline(cell)}</td>`))
+        output.push('</tr>')
+      }
+      output.push('</tbody></table>')
+      continue
+    }
+    if (!line.trim()) {
+      closeList()
+      continue
+    }
+    closeList()
+    output.push(`<p>${renderReportInline(line)}</p>`)
+  }
+  closeList()
+  if (inCode) output.push('</code></pre>')
+  return output.join('')
+}
+
 const reportHtml = computed(() => renderReportHtml(reportPreview.value?.content || ''))
 const messages = ref([{ role: 'assistant', content: 'AI 运维智能体已就绪，有什么问题请说。' }])
 const input = ref('')

@@ -949,6 +949,7 @@ def _alert_query(
     days: Optional[int] = None,
     visible_device_ids: Optional[List[int]] = None,
     hidden: Optional[bool] = None,
+    resolved: Optional[bool] = None,
 ):
     """构造告警查询（供列表与导出复用；visible_device_ids=None 表示全部）"""
     query = db.query(Alert)
@@ -959,6 +960,10 @@ def _alert_query(
 
     if alert_level:
         query = query.filter(Alert.alert_level == alert_level)
+    if resolved is True:
+        query = query.filter(Alert.resolved_at.isnot(None))
+    elif resolved is False:
+        query = query.filter(Alert.resolved_at.is_(None))
     if acknowledged is not None:
         query = query.filter(Alert.is_acknowledged == acknowledged)
         if acknowledged is False:
@@ -1001,12 +1006,14 @@ def list_alerts(
     device_id: Optional[int] = None,
     search: Optional[str] = None,
     days: Optional[int] = None,
+    resolved: Optional[bool] = None,
     source: Optional[str] = Query(None, pattern="^(device|website|virtualization)$"),
 ):
     """分页查询告警（设备告警按群组过滤，网站告警不分组）"""
     items = _merged_alert_items(
         db, alert_level, acknowledged, alert_type, device_id, search, days, source,
         visible_device_ids=asset_scope.visible_device_ids(db, request),
+        resolved=resolved,
     )
     total = len(items)
     start = (page - 1) * size
@@ -1028,6 +1035,7 @@ def export_alerts(
     device_id: Optional[int] = None,
     search: Optional[str] = None,
     days: Optional[int] = None,
+    resolved: Optional[bool] = None,
     source: Optional[str] = Query(None, pattern="^(device|website|virtualization)$"),
     db: Session = Depends(get_db),
 ):
@@ -1035,6 +1043,7 @@ def export_alerts(
     items = _merged_alert_items(
         db, alert_level, acknowledged, alert_type, device_id, search, days, source,
         visible_device_ids=asset_scope.visible_device_ids(db, request),
+        resolved=resolved,
     )[:20000]
 
     stamp = datetime.now().strftime("%Y%m%d_%H%M")
@@ -1437,6 +1446,7 @@ def _website_alert_query(
     search: Optional[str] = None,
     days: Optional[int] = None,
     hidden: Optional[bool] = None,
+    resolved: Optional[bool] = None,
 ):
     """构造网站告警查询"""
     query = db.query(WebsiteAlert)
@@ -1446,6 +1456,10 @@ def _website_alert_query(
         query = query.filter(WebsiteAlert.is_hidden.isnot(True))
     if alert_level:
         query = query.filter(WebsiteAlert.alert_level == alert_level)
+    if resolved is True:
+        query = query.filter(WebsiteAlert.resolved_at.isnot(None))
+    elif resolved is False:
+        query = query.filter(WebsiteAlert.resolved_at.is_(None))
     if acknowledged is not None:
         query = query.filter(WebsiteAlert.is_acknowledged == acknowledged)
         if acknowledged is False:
@@ -1503,6 +1517,7 @@ def _virtualization_alert_query(
     search: Optional[str] = None,
     days: Optional[int] = None,
     hidden: Optional[bool] = None,
+    resolved: Optional[bool] = None,
 ):
     query = db.query(VirtualizationAlert)
     if hidden is True:
@@ -1511,6 +1526,10 @@ def _virtualization_alert_query(
         query = query.filter(VirtualizationAlert.is_hidden.isnot(True))
     if alert_level:
         query = query.filter(VirtualizationAlert.alert_level == alert_level)
+    if resolved is True:
+        query = query.filter(VirtualizationAlert.resolved_at.isnot(None))
+    elif resolved is False:
+        query = query.filter(VirtualizationAlert.resolved_at.is_(None))
     if acknowledged is not None:
         query = query.filter(VirtualizationAlert.is_acknowledged == acknowledged)
     if alert_type:
@@ -1610,25 +1629,29 @@ def _merged_alert_items(
     limit: int = 20000,
     include_virtualization: bool = True,
     hidden: Optional[bool] = None,
+    resolved: Optional[bool] = None,
 ) -> List[Dict[str, Any]]:
     """合并设备/网站/虚拟化告警，按时间倒序返回。"""
-    if source not in ("website", "virtualization"):
-        reconcile_metric_alerts(db, visible_device_ids)
+    # 列表读取时统一对账设备指标、网站、虚拟化和存储告警；
+    # 否则默认“未确认”列表不会关闭条件已恢复的网站/虚拟化告警。
+    alert_lifecycle.reconcile_active_alerts(db)
     items: List[Dict[str, Any]] = []
     if source not in ("website", "virtualization"):
         device_alerts = _alert_query(
             db, alert_level, acknowledged, alert_type, device_id, search, days,
-            visible_device_ids=visible_device_ids, hidden=hidden,
+            visible_device_ids=visible_device_ids, hidden=hidden, resolved=resolved,
         ).limit(limit).all()
         items.extend(_enrich_alerts(db, device_alerts))
     if source not in ("device", "virtualization") and not device_id:
         website_alerts = _website_alert_query(
-            db, alert_level, acknowledged, alert_type, search, days, hidden=hidden
+            db, alert_level, acknowledged, alert_type, search, days, hidden=hidden,
+            resolved=resolved,
         ).limit(limit).all()
         items.extend(_website_alert_items(db, website_alerts))
     if include_virtualization and source not in ("device", "website") and not device_id:
         vm_alerts = _virtualization_alert_query(
-            db, alert_level, acknowledged, alert_type, search, days, hidden=hidden
+            db, alert_level, acknowledged, alert_type, search, days, hidden=hidden,
+            resolved=resolved,
         ).limit(limit).all()
         items.extend(_virtualization_alert_items(db, vm_alerts))
     items.sort(key=lambda item: (item.get("created_at") or "", item.get("id") or 0), reverse=True)

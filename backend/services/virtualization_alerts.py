@@ -15,6 +15,7 @@ from ..models.virtualization import (
     VirtualPlatform,
     VirtualizationAlert,
 )
+from .alert_recovery import build_generic_recovery_payload
 from . import settings as settings_service
 
 logger = logging.getLogger(__name__)
@@ -676,6 +677,7 @@ def evaluate_platform(db: Session, platform_id: int, now: Optional[datetime] = N
             updated += 1
 
     resolved = 0
+    resolved_alerts: List[VirtualizationAlert] = []
     for key, alert in by_key.items():
         if key in wanted:
             continue
@@ -683,16 +685,37 @@ def evaluate_platform(db: Session, platform_id: int, now: Optional[datetime] = N
         alert.resolution = "auto_recovered"
         alert.is_acknowledged = True
         alert.updated_at = now
+        resolved_alerts.append(alert)
         resolved += 1
 
     if created or updated or resolved or dismissed_cleared:
         db.commit()
-    # 新产生的告警按 send_notification 开关分发到告警渠道；更新/恢复不重复通知
+    # 新产生的告警按 send_notification 开关分发到告警渠道
     for alert in new_alerts:
         try:
             dispatch_alert_notification(alert)
         except Exception as exc:  # noqa: BLE001
             logger.warning("虚拟机告警通知分发异常（告警 %s）: %s", alert.id, exc)
+    # 条件消失的告警发送恢复通知；source_id 为负值，避免与原告警去重
+    for alert in resolved_alerts:
+        if alert.send_notification is False:
+            continue
+        try:
+            name = alert.vm_name or alert.platform_name or f"虚拟化告警#{alert.id}"
+            notify_alert_sync(build_generic_recovery_payload(
+                source="virtualization",
+                alert_id=alert.id,
+                name=name,
+                alert_type=alert.alert_type,
+                message=alert.message,
+                level=alert.alert_level,
+                value=alert.value,
+                threshold=alert.threshold,
+                recovered_at=alert.resolved_at,
+                original_created_at=alert.created_at,
+            ))
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("虚拟机告警恢复通知分发异常（告警 %s）: %s", alert.id, exc)
     active_count = (
         db.query(VirtualizationAlert)
         .filter(

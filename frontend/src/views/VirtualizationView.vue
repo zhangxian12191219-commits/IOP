@@ -5,7 +5,7 @@
         <div class="hero-copy">
           <span class="hero-kicker">VIRTUAL INFRASTRUCTURE / 只读纳管</span>
           <h1>虚拟化管理</h1>
-          <p>统一查看 VMware vCenter、H3C CAS、Proxmox VE、KVM、Docker 与 Kubernetes 节点/容器资源和使用率排行，不执行开关机、删除等写操作。</p>
+          <p>统一查看 VMware vCenter、H3C CAS、Proxmox VE、OpenStack、KVM、Docker 与 Kubernetes 节点/容器资源和使用率排行，不执行开关机、删除等写操作。</p>
         </div>
         <div class="hero-actions">
           <el-button :loading="syncingAll" @click="syncAll">
@@ -31,7 +31,7 @@
         <div class="section-head">
           <div>
             <strong>平台连接</strong>
-            <small>VMware vCenter 8.0+ / H3C CAS / Proxmox VE / KVM libvirt over SSH</small>
+            <small>VMware vCenter 8.0+ / H3C CAS / Proxmox VE / OpenStack / KVM libvirt over SSH</small>
           </div>
           <el-button link type="primary" @click="loadAll" :loading="loading">刷新</el-button>
         </div>
@@ -584,7 +584,7 @@
     </el-card>
 
     <el-dialog v-model="platformDialogVisible" :title="editingPlatform ? '编辑虚拟化平台' : '添加虚拟化平台'" width="640px" top="4vh" class="platform-dialog">
-      <el-form :model="platformForm" label-width="100px">
+      <el-form :model="platformForm" label-width="100px" label-position="left" class="platform-form">
         <el-form-item label="平台名称" required>
           <el-input v-model="platformForm.name" placeholder="例如：生产 vCenter" />
         </el-form-item>
@@ -596,6 +596,7 @@
             <el-radio-button value="kvm">KVM / libvirt</el-radio-button>
             <el-radio-button value="docker">Docker</el-radio-button>
             <el-radio-button value="kubernetes">Kubernetes</el-radio-button>
+            <el-radio-button value="openstack">OpenStack</el-radio-button>
           </el-radio-group>
         </el-form-item>
         <div class="connect-guide">
@@ -609,14 +610,14 @@
           <div class="connect-guide-note">{{ connectionGuide.note }}</div>
         </div>
         <el-form-item label="管理地址" required>
-          <el-input v-model="platformForm.address" :placeholder="platformForm.platform_type === 'docker' ? 'Docker 主机 IP 或域名，例如 10.10.0.40' : platformForm.platform_type === 'kubernetes' ? 'Kubernetes API 地址，例如 10.10.0.50' : platformForm.platform_type === 'cas' ? 'CAS 管理 IP 或域名，例如 10.10.0.20' : platformForm.platform_type === 'proxmox' ? 'Proxmox 节点 IP 或域名，例如 10.10.0.30' : 'IP 或域名，例如 10.10.0.20'" />
+          <el-input v-model="platformForm.address" :placeholder="platformForm.platform_type === 'docker' ? 'Docker 主机 IP 或域名，例如 10.10.0.40' : platformForm.platform_type === 'kubernetes' ? 'Kubernetes API 地址，例如 10.10.0.50' : platformForm.platform_type === 'cas' ? 'CAS 管理 IP 或域名，例如 10.10.0.20' : platformForm.platform_type === 'proxmox' ? 'Proxmox 节点 IP 或域名，例如 10.10.0.30' : platformForm.platform_type === 'openstack' ? 'Keystone 地址，例如 10.10.0.60 或 https://keystone.example.com' : 'IP 或域名，例如 10.10.0.20'" />
         </el-form-item>
         <el-form-item label="端口" required>
           <el-input-number v-model="platformForm.port" :min="1" :max="65535" controls-position="right" style="width: 160px" />
-          <span class="form-hint">{{ platformForm.platform_type === 'vmware' ? 'HTTPS 默认 443' : platformForm.platform_type === 'proxmox' ? 'Proxmox 默认 8006' : platformForm.platform_type === 'cas' ? 'CAS 默认 8080' : platformForm.platform_type === 'docker' ? 'Docker 默认 2375 / TLS 2376' : platformForm.platform_type === 'kubernetes' ? 'Kubernetes API 默认 6443' : 'SSH 默认 22' }}</span>
+          <span class="form-hint">{{ platformForm.platform_type === 'vmware' ? 'HTTPS 默认 443' : platformForm.platform_type === 'proxmox' ? 'Proxmox 默认 8006' : platformForm.platform_type === 'cas' ? 'CAS 默认 8080' : platformForm.platform_type === 'docker' ? 'Docker 默认 2375 / TLS 2376' : platformForm.platform_type === 'kubernetes' ? 'Kubernetes API 默认 6443' : platformForm.platform_type === 'openstack' ? 'Keystone 默认 5000' : 'SSH 默认 22' }}</span>
         </el-form-item>
         <el-form-item label="用户名" required>
-          <el-input v-model="platformForm.username" :placeholder="platformForm.platform_type === 'vmware' ? '只读 SSO 账号，如 snmp-nms@vsphere.local' : platformForm.platform_type === 'proxmox' ? 'root@pam 或 root@pam!tokenid' : platformForm.platform_type === 'docker' ? 'Docker API 用户名，无认证可填 docker' : platformForm.platform_type === 'kubernetes' ? 'Kubernetes（令牌填在密码栏）' : '只读账号'" />
+          <el-input v-model="platformForm.username" :placeholder="platformForm.platform_type === 'vmware' ? '只读 SSO 账号，如 snmp-nms@vsphere.local' : platformForm.platform_type === 'proxmox' ? 'root@pam 或 root@pam!tokenid' : platformForm.platform_type === 'docker' ? 'Docker API 用户名，无认证可填 docker' : platformForm.platform_type === 'kubernetes' ? 'Kubernetes（令牌填在密码栏）' : platformForm.platform_type === 'openstack' ? 'OpenStack 用户名' : '只读账号'" />
           <span v-if="platformForm.platform_type === 'vmware'" class="form-hint">
             必须使用 vSphere SSO 账号，格式 user@vsphere.local 或 user@AD域；只填用户名时自动补 @vsphere.local
           </span>
@@ -624,12 +625,20 @@
             密码登录填 root@pam；API Token 填 user@realm!tokenid，密码填 Token Secret
           </span>
         </el-form-item>
-        <el-form-item label="密码" :required="!editingPlatform">
-          <el-input v-model="platformForm.password" type="password" show-password :placeholder="editingPlatform ? '留空表示不修改' : platformForm.platform_type === 'kubernetes' ? 'ServiceAccount Bearer Token' : platformForm.platform_type === 'proxmox' ? '密码或 API Token Secret' : '平台密码'" />
+        <el-form-item v-if="platformForm.platform_type === 'openstack'" label="项目/租户" required>
+          <el-input v-model="platformForm.project_name" placeholder="例如 admin、demo 或项目名称" />
+          <span class="form-hint">OpenStack 项目（tenant）名称，用于认证后读取 Nova/Cinder 资源。</span>
         </el-form-item>
-        <el-form-item v-if="['vmware','proxmox','cas','docker','kubernetes'].includes(platformForm.platform_type)" label="TLS 校验">
+        <el-form-item v-if="platformForm.platform_type === 'openstack'" label="认证域">
+          <el-input v-model="platformForm.domain_name" placeholder="默认 Default" />
+          <span class="form-hint">Keystone 用户和项目所属域，通常为 Default；LDAP 环境请填写实际域名。</span>
+        </el-form-item>
+        <el-form-item label="密码" :required="!editingPlatform">
+          <el-input v-model="platformForm.password" type="password" show-password :placeholder="editingPlatform ? '留空表示不修改' : platformForm.platform_type === 'kubernetes' ? 'ServiceAccount Bearer Token' : platformForm.platform_type === 'proxmox' ? '密码或 API Token Secret' : platformForm.platform_type === 'openstack' ? 'OpenStack 用户密码' : '平台密码'" />
+        </el-form-item>
+        <el-form-item v-if="['vmware','proxmox','cas','docker','kubernetes','openstack'].includes(platformForm.platform_type)" label="TLS 校验">
           <el-switch v-model="platformForm.verify_tls" />
-          <span class="form-hint">{{ platformForm.platform_type === 'docker' ? 'Docker TLS 使用自签名证书时可关闭' : platformForm.platform_type === 'kubernetes' ? 'Kubernetes API 使用自签名证书时可关闭' : platformForm.platform_type === 'cas' ? 'HTTPS 管理地址使用自签名证书时可关闭' : platformForm.platform_type === 'proxmox' ? 'Proxmox 自签名证书可关闭' : 'vCenter 自签名证书可关闭' }}</span>
+          <span class="form-hint">{{ platformForm.platform_type === 'docker' ? 'Docker TLS 使用自签名证书时可关闭' : platformForm.platform_type === 'kubernetes' ? 'Kubernetes API 使用自签名证书时可关闭' : platformForm.platform_type === 'cas' ? 'HTTPS 管理地址使用自签名证书时可关闭' : platformForm.platform_type === 'proxmox' ? 'Proxmox 自签名证书可关闭' : platformForm.platform_type === 'openstack' ? 'Keystone 自签名证书可关闭' : 'vCenter 自签名证书可关闭' }}</span>
         </el-form-item>
         <el-form-item label="同步间隔">
           <el-input-number v-model="platformForm.sync_interval_minutes" :min="1" :max="1440" controls-position="right" style="width: 160px" />
@@ -672,6 +681,13 @@
           :closable="false"
           show-icon
           title="Proxmox VE 使用 API2 只读采集，默认 HTTPS 8006；支持 root@pam 密码或 user@realm!tokenid + Token Secret，只读账号建议分配 PVEAuditor 角色。"
+        />
+        <el-alert
+          v-else-if="platformForm.platform_type === 'openstack'"
+          type="info"
+          :closable="false"
+          show-icon
+          title="OpenStack 使用 Keystone v3 认证，通过 Nova 读取宿主机/虚拟机、Cinder 读取磁盘容量；只读账号需要 compute、volume 查询权限。虚拟机实时 CPU/内存使用率需额外部署 Ceilometer/Gnocchi。"
         />
       </el-form>
       <template #footer>
@@ -952,7 +968,7 @@ const platformDialogVisible = ref(false)
 const editingPlatform = ref(null)
 const platformForm = reactive({
   name: '', platform_type: 'vmware', address: '', port: 443, username: '',
-  password: '', verify_tls: true, enabled: true, sync_interval_minutes: 5,
+  password: '', project_name: '', domain_name: 'Default', verify_tls: true, enabled: true, sync_interval_minutes: 5,
 })
 const vmDrawerVisible = ref(false)
 const selectedVm = ref(null)
@@ -1079,7 +1095,7 @@ function syncStatusText(value) {
 }
 
 function platformTypeName(type) {
-  return { vmware: 'VMware vCenter', proxmox: 'Proxmox VE', cas: 'H3C CAS', kvm: 'KVM / libvirt', docker: 'Docker Engine', kubernetes: 'Kubernetes' }[type] || type
+  return { vmware: 'VMware vCenter', proxmox: 'Proxmox VE', cas: 'H3C CAS', kvm: 'KVM / libvirt', docker: 'Docker Engine', kubernetes: 'Kubernetes', openstack: 'OpenStack' }[type] || type
 }
 
 const connectionGuide = computed(() => {
@@ -1129,6 +1145,15 @@ const connectionGuide = computed(() => {
       ],
       note: '仅调用 /version、/info、/containers/json 等只读接口；不启动、停止、删除容器。无认证时用户名可填 docker。',
     },
+    openstack: {
+      title: 'OpenStack',
+      steps: [
+        '准备只读 OpenStack 用户，并确认该用户可访问 Keystone v3、Nova compute 和 Cinder volume 查询接口。',
+        '填写 Keystone 地址和 5000 端口，填写用户名、密码、项目/租户；LDAP 域不是 Default 时填写认证域。',
+        '保存后测试连接；同步会读取 hypervisor、server、flavor 和 volume，虚拟机实时 CPU/内存使用率取决于 Ceilometer/Gnocchi。',
+      ],
+      note: '只调用认证、hypervisor、server、flavor、volume 查询接口，不启动、停止、删除或迁移任何资源。',
+    },
     kubernetes: {
       title: 'Kubernetes',
       steps: [
@@ -1143,7 +1168,7 @@ const connectionGuide = computed(() => {
 })
 
 function onPlatformTypeChange(value) {
-  platformForm.port = value === 'vmware' ? 443 : value === 'proxmox' ? 8006 : value === 'cas' ? 8080 : value === 'docker' ? 2375 : value === 'kubernetes' ? 6443 : 22
+  platformForm.port = value === 'vmware' ? 443 : value === 'proxmox' ? 8006 : value === 'cas' ? 8080 : value === 'docker' ? 2375 : value === 'kubernetes' ? 6443 : value === 'openstack' ? 5000 : 22
   if (value === 'docker') { platformForm.username = platformForm.username || 'docker'; platformForm.verify_tls = false }
   if (value === 'kubernetes') { platformForm.username = 'kubernetes'; platformForm.verify_tls = true }
 }
@@ -1152,11 +1177,11 @@ function openPlatformDialog(platform = null) {
   editingPlatform.value = platform
   Object.assign(platformForm, platform ? {
     name: platform.name, platform_type: platform.platform_type, address: platform.address,
-    port: platform.port, username: platform.username, password: '', verify_tls: platform.verify_tls,
+    port: platform.port, username: platform.username, password: '', project_name: platform.project_name || '', domain_name: platform.domain_name || 'Default', verify_tls: platform.verify_tls,
     enabled: platform.enabled, sync_interval_minutes: platform.sync_interval_minutes,
   } : {
     name: '', platform_type: 'vmware', address: '', port: 443, username: '',
-    password: '', verify_tls: true, enabled: true, sync_interval_minutes: 5,
+    password: '', project_name: '', domain_name: 'Default', verify_tls: true, enabled: true, sync_interval_minutes: 5,
   })
   platformDialogVisible.value = true
 }
@@ -1570,6 +1595,10 @@ async function loadAll() {
 async function savePlatform() {
   if (!platformForm.name.trim() || !platformForm.address.trim() || !platformForm.username.trim()) {
     ElMessage.warning('请填写平台名称、地址和用户名')
+    return
+  }
+  if (platformForm.platform_type === 'openstack' && !platformForm.project_name.trim()) {
+    ElMessage.warning('OpenStack 必须填写项目/租户')
     return
   }
   if (!editingPlatform.value && !platformForm.password) {
@@ -2205,9 +2234,43 @@ onBeforeUnmount(() => {
   overflow-y: auto;
 }
 
+.platform-dialog :deep(.el-form-item__label) {
+  justify-content: flex-start;
+  text-align: left;
+}
+
+.platform-dialog :deep(.el-form-item__content),
+.virtualization-page :deep(.el-form-item__content) {
+  min-width: 0;
+  justify-content: flex-start;
+  text-align: left;
+}
+
+.platform-dialog :deep(.el-input-number),
+.platform-dialog :deep(.el-input-number .el-input__inner) {
+  text-align: left;
+}
+
+.platform-dialog .form-hint {
+  display: block;
+  width: 100%;
+  margin: 4px 0 0;
+  line-height: 1.55;
+}
+
+.platform-dialog :deep(.el-alert) {
+  margin-left: 100px;
+  width: calc(100% - 100px);
+  box-sizing: border-box;
+}
+
 @media (max-width: 760px) {
   .connect-guide {
     margin-left: 0;
+  }
+  .platform-dialog :deep(.el-alert) {
+    margin-left: 0;
+    width: 100%;
   }
 }
 

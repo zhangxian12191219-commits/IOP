@@ -10,7 +10,7 @@ from fastapi.responses import Response
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 from typing import Any, Dict, Optional, List
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from ..config import Config
 from ..models.database import get_db
@@ -30,6 +30,7 @@ from ..services import asset_scope, audit
 from ..services.virtualization_crypto import encrypt_password
 from ..services.cache import invalidate_all
 from ..services.warranty_alerts import check_warranty_alerts
+from ..notify import notify_alert_sync
 
 router = APIRouter(prefix="/api/assets", tags=["资产管理"])
 
@@ -918,7 +919,8 @@ def create_device(payload: DeviceCreate, request: Request, db: Session = Depends
     db.commit()
     invalidate_all()
     db.refresh(device)
-    check_warranty_alerts(db, [device.id])
+    for notification in check_warranty_alerts(db, [device.id]):
+        notify_alert_sync(notification)
     return device_to_dict(db, device)
 
 
@@ -993,7 +995,8 @@ def update_device(
     db.commit()
     invalidate_all()
     db.refresh(device)
-    check_warranty_alerts(db, [device.id])
+    for notification in check_warranty_alerts(db, [device.id]):
+        notify_alert_sync(notification)
     invalidate_topology()
     return device_to_dict(db, device)
 
@@ -1370,6 +1373,11 @@ def device_to_dict(db: Session, device: Device) -> dict:
         "created_at": device.created_at.isoformat() if device.created_at else None,
         "updated_at": device.updated_at.isoformat() if device.updated_at else None,
         "metric": metric_to_dict(metric) if metric else None,
+        "is_online": bool(
+            metric
+            and metric.collected_at
+            and (datetime.utcnow() - metric.collected_at) <= timedelta(minutes=10)
+        ),
         "alert_rules": _device_alert_rules(
             db,
             device,

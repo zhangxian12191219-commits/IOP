@@ -1,4 +1,4 @@
-export const VERSION_RADIX = 50
+export const VERSION_RADIX = 100
 
 export function parseSemver(value) {
   const match = /^(\d+)\.(\d+)\.(\d+)/.exec(String(value || '').trim())
@@ -7,8 +7,8 @@ export function parseSemver(value) {
 }
 
 /**
- * 按五十进制递增：
- * 1.1.0 → ... → 1.1.49 → 1.2.0 → ... → 1.49.49 → 2.0.0
+ * 按百进制递增：
+ * 1.1.0 → ... → 1.1.99 → 1.2.0 → ... → 1.99.99 → 2.0.0
  */
 export function bumpVersion(baseVersion, increments) {
   const semver = parseSemver(baseVersion)

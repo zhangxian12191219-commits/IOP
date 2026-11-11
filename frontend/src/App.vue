@@ -198,8 +198,8 @@
   </el-container>
 
   <!-- 全局即时通信 / 后台通话与悬浮球（路由切换不销毁） -->
-  <ImCallOverlay v-if="currentUser.id" />
-  <FloatingBall v-if="currentUser.id && !isFullscreen" />
+  <ImCallOverlay v-if="canIm" />
+  <FloatingBall v-if="canIm && !isFullscreen" />
 
   <!-- 修改密码 -->
   <el-dialog
@@ -279,6 +279,7 @@ import hi from 'element-plus/es/locale/lang/hi'
 const route = useRoute()
 const router = useRouter()
 const imUnread = computed(() => Number(unreadTotal.value || 0))
+const canIm = computed(() => Boolean(currentUser.value?.id && can('im:view')))
 let imAudioUnlocked = false
 function unlockImAudio() {
   if (imAudioUnlocked) return
@@ -288,14 +289,18 @@ function unlockImAudio() {
   window.removeEventListener('keydown', unlockImAudio)
 }
 
-watch(() => currentUser.value?.id, (userId) => {
-  if (userId) {
+watch([() => currentUser.value?.id, canIm], ([userId, imEnabled]) => {
+  if (userId && imEnabled) {
     connectIM()
+  } else {
+    disconnectIM()
+  }
+  if (userId) {
     if (!imAudioUnlocked) {
       window.addEventListener('pointerdown', unlockImAudio, { once: true })
       window.addEventListener('keydown', unlockImAudio, { once: true })
     }
-  } else disconnectIM()
+  }
 }, { immediate: true })
 const ELEMENT_LOCALES = {
   'zh-CN': zhCn, 'zh-TW': zhTw, 'en-US': enUs, 'ja-JP': ja, 'ko-KR': ko,
@@ -311,6 +316,7 @@ const lastSoundAt = ref(0)
 let alertTimer = null
 let idleTimer = null
 let displayKeepAliveTimer = null
+let permissionTimer = null
 
 // 大屏页面已移除，菜单统一使用路由跳转
 function handleMenuSelect(index) {
@@ -457,7 +463,7 @@ const MENU_DEFS = [
   { key: 'alerts', index: '/alerts', permission: 'monitor:view', icon: 'Bell', labelKey: 'menu.alerts', badge: true },
   { key: 'notifications', index: '/notifications', permission: 'notifications:view', icon: 'Message', labelKey: 'menu.notifications', superuserOnly: true },
   { key: 'discovery', index: '/discovery', permission: 'discovery:view', icon: 'Aim', labelKey: 'menu.discovery' },
-  { key: 'im', index: '/im', permission: null, icon: 'ChatDotRound', labelKey: 'menu.im' },
+  { key: 'im', index: '/im', permission: 'im:view', icon: 'ChatDotRound', labelKey: 'menu.im' },
   { key: 'inspection', index: '/inspection', permission: 'inspection:view', icon: 'DocumentChecked', label: '设备巡检', labelKey: 'menu.inspection' },
   { key: 'configBackups', index: '/config-backups', permission: 'config_backup:view', icon: 'FolderOpened', labelKey: 'menu.configBackups' },
   { key: 'credentials', index: '/credentials', permission: 'credentials:view', icon: 'Key', label: '设备凭据' },
@@ -935,12 +941,29 @@ function onAiFunctionFocus(event) {
   } catch { /* ignore malformed focus event */ }
 }
 
+async function refreshPermissions() {
+  if (route.meta?.public) return
+  await refreshMe()
+  const need = route.meta?.permission
+  if (need && !can(need)) {
+    ElMessage.warning('当前账号的功能权限已变更，请重新登录或联系管理员')
+    router.replace('/profile').catch(() => {})
+  }
+}
+
+function onPermissionVisibilityChange() {
+  if (!document.hidden) refreshPermissions()
+}
+
 onMounted(async () => {
   if (route.meta?.public) return
   await loadPublicSettings()
   if (!(await ensureLicenseUsable())) return
   await loadVersionInfo()
   await refreshMe()
+  permissionTimer = setInterval(refreshPermissions, 10000)
+  document.addEventListener('visibilitychange', onPermissionVisibilityChange)
+  window.addEventListener('focus', refreshPermissions)
   if (currentUser.value?.id) syncDashboardRulesFromStorage().catch(() => {})
   fetchAlertCount()
   startAlertTimer()
@@ -956,6 +979,9 @@ onBeforeUnmount(() => {
   if (alertTimer) clearInterval(alertTimer)
   if (idleTimer) clearTimeout(idleTimer)
   if (displayKeepAliveTimer) clearInterval(displayKeepAliveTimer)
+  if (permissionTimer) clearInterval(permissionTimer)
+  document.removeEventListener('visibilitychange', onPermissionVisibilityChange)
+  window.removeEventListener('focus', refreshPermissions)
   unbindIdleEvents()
   window.removeEventListener('nms:alerts-updated', onAlertsUpdated)
   if (alertsUpdatedTimer) clearTimeout(alertsUpdatedTimer)

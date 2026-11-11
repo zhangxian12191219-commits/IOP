@@ -1,5 +1,5 @@
 import { createRouter, createWebHistory } from 'vue-router'
-import { consumeHandoff } from '@/store/auth'
+import { consumeHandoff, refreshMe } from '@/store/auth'
 
 const routes = [
   {
@@ -113,7 +113,7 @@ const routes = [
     path: '/im',
     name: 'InstantMessaging',
     component: () => import('@/views/ImView.vue'),
-    meta: { title: '即时通信' },
+    meta: { title: '即时通信', permission: 'im:view' },
   },
   {
     path: '/tools',
@@ -269,7 +269,7 @@ const router = createRouter({
 })
 
 /** 前端路由守卫：未登录跳登录页；无权限跳首页 */
-router.beforeEach((to) => {
+router.beforeEach(async (to) => {
   // 大屏/新页签 handoff 必须先消费，再判断登录态；否则会先跳 /login。
   consumeHandoff()
   const token = localStorage.getItem('nms_token') || sessionStorage.getItem('nms_token')
@@ -283,7 +283,7 @@ router.beforeEach((to) => {
   }
 
   const need = to.meta?.permission
-  if (need) {
+  if (need || to.meta?.requiresSuperuser) {
     let user = null
     try {
       user = JSON.parse(
@@ -292,7 +292,14 @@ router.beforeEach((to) => {
     } catch {
       user = null
     }
-    const allowed = user?.is_superuser || (user?.permissions || []).includes(need)
+    // 角色权限可能刚被管理员移除。带权限要求的路由每次都先向服务端刷新，
+    // 不能只信浏览器缓存的旧权限，否则用户直接输入地址仍可进入已无权限的功能。
+    const fresh = await refreshMe()
+    if (fresh) user = fresh
+    const isAllowed = (candidate) => Boolean(
+      candidate?.is_superuser || (candidate?.permissions || []).includes(need)
+    )
+    const allowed = need ? isAllowed(user) : true
     // 没有任何监控权限的账号不要反复重定向到 /dashboard，直接进入个人账户
     if (!allowed) return to.path === '/dashboard' ? '/profile' : '/dashboard'
     if (to.meta?.requiresSuperuser && !user?.is_superuser) return '/profile'

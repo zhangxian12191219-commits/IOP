@@ -696,6 +696,55 @@
         <el-tab-pane label="自定义告警规则" name="rules">
           <AlertRulesPanel :device-id="Number(route.params.id)" @changed="refreshDashboardMetrics" />
         </el-tab-pane>
+        <el-tab-pane label="历史告警" name="history">
+          <div class="alert-history-toolbar">
+            <span class="muted">共 {{ alertHistoryTotal }} 条历史告警</span>
+            <el-button size="small" :loading="alertHistoryLoading" @click="loadAlertHistory">刷新</el-button>
+          </div>
+          <el-table
+            :data="alertHistory"
+            stripe
+            v-loading="alertHistoryLoading"
+            style="width: 100%"
+            max-height="calc(100vh - 360px)"
+          >
+            <el-table-column label="告警时间" width="170">
+              <template #default="{ row }">{{ formatDateTime(row.created_at) }}</template>
+            </el-table-column>
+            <el-table-column label="级别" width="90">
+              <template #default="{ row }">
+                <el-tag :type="alertLevelType(row.alert_level)" size="small">
+                  {{ row.level_label || alertLevelText(row.alert_level) }}
+                </el-tag>
+              </template>
+            </el-table-column>
+            <el-table-column label="类型" width="130" show-overflow-tooltip>
+              <template #default="{ row }">{{ row.alert_type_text || row.alert_type }}</template>
+            </el-table-column>
+            <el-table-column prop="message" label="告警内容" min-width="260" show-overflow-tooltip />
+            <el-table-column label="状态" width="100">
+              <template #default="{ row }">
+                <el-tag v-if="row.resolved_at" type="success" size="small">已恢复</el-tag>
+                <el-tag v-else-if="row.is_acknowledged" type="warning" size="small">已确认</el-tag>
+                <el-tag v-else type="danger" size="small">未恢复</el-tag>
+              </template>
+            </el-table-column>
+            <el-table-column label="恢复时间" width="170">
+              <template #default="{ row }">{{ row.resolved_at ? formatDateTime(row.resolved_at) : '-' }}</template>
+            </el-table-column>
+          </el-table>
+          <el-empty v-if="!alertHistoryLoading && !alertHistory.length" description="暂无历史告警" />
+          <el-pagination
+            v-model:current-page="alertHistoryPage"
+            v-model:page-size="alertHistorySize"
+            :total="alertHistoryTotal"
+            :page-sizes="[10, 20, 50, 100]"
+            layout="total, sizes, prev, pager, next"
+            class="alert-history-pager"
+            @current-change="loadAlertHistory"
+            @size-change="onAlertHistorySizeChange"
+          />
+        </el-tab-pane>
         <el-tab-pane :label="t('device.maintenanceRecords')" name="maintenance">
           <div class="maint-toolbar">
             <el-button type="primary" size="small" @click="openAddMaintenance">
@@ -1528,6 +1577,11 @@ function onIfDetailClosed() {
 
 const alerts = ref([])
 const activeAlerts = ref([])
+const alertHistory = ref([])
+const alertHistoryTotal = ref(0)
+const alertHistoryPage = ref(1)
+const alertHistorySize = ref(20)
+const alertHistoryLoading = ref(false)
 const dashboardMetricsConfig = ref(readDashboardMetricsConfig())
 const currentDashboardMetrics = computed(() => {
   const rows = buildDeviceDashboardMetrics(dashboardMetricsConfig.value, device.value)
@@ -1549,7 +1603,7 @@ const currentDashboardMetrics = computed(() => {
 function refreshDashboardMetrics() {
   dashboardMetricsConfig.value = readDashboardMetricsConfig()
 }
-const TABS = ['info', 'hardware', 'cpu', 'memory', 'temperature', 'interfaces', 'alerts', 'current-metrics', 'rules', 'maintenance', 'custom']
+const TABS = ['info', 'hardware', 'cpu', 'memory', 'temperature', 'interfaces', 'alerts', 'current-metrics', 'rules', 'history', 'maintenance', 'custom']
 const activeTab = ref(
   TABS.includes(String(route.query.tab || '')) ? String(route.query.tab) : 'info'
 )
@@ -2106,6 +2160,27 @@ async function loadBase() {
   await loadMaintenance()
 }
 
+async function loadAlertHistory() {
+  alertHistoryLoading.value = true
+  try {
+    const res = await monitorApi.getAlerts(route.params.id, {
+      page: alertHistoryPage.value,
+      size: alertHistorySize.value,
+    })
+    alertHistory.value = res.data?.items || []
+    alertHistoryTotal.value = Number(res.data?.total || 0)
+  } catch (e) {
+    ElMessage.error(e?.response?.data?.detail || e.message || '加载历史告警失败')
+  } finally {
+    alertHistoryLoading.value = false
+  }
+}
+
+function onAlertHistorySizeChange() {
+  alertHistoryPage.value = 1
+  loadAlertHistory()
+}
+
 async function loadOverview() {
   const res = await monitorApi.getDeviceOverview(route.params.id)
   if (res.data?.metric_thresholds) metricThresholds.value = { ...metricThresholds.value, ...res.data.metric_thresholds }
@@ -2216,6 +2291,7 @@ async function renderCustomChart() {
 async function onTabChange() {
   await nextTick()
   if (activeTab.value === 'current-metrics') refreshDashboardMetrics()
+  if (activeTab.value === 'history') await loadAlertHistory()
   await renderCharts()
   // 页签切换后容器尺寸可能变化，主动 resize 已初始化的图表
   cpuChart?.resize()
@@ -2229,6 +2305,7 @@ async function refreshAll() {
   try {
     await loadBase()
     await loadOverview()
+    if (activeTab.value === 'history') await loadAlertHistory()
     await renderCharts()
   } catch (e) {
     ElMessage.error(e.message || t('device.loadDeviceFailed'))
@@ -2363,6 +2440,7 @@ onMounted(async () => {
   if (activeTab.value === 'interfaces' && isApiDevice.value && !interfaces.value.length) {
     loadApiInterfaces()
   }
+  if (activeTab.value === 'history') await loadAlertHistory()
   timer = setInterval(refreshAll, refreshMs())
 })
 
@@ -2384,6 +2462,9 @@ window.addEventListener('resize', () => {
 </script>
 
 <style scoped>
+.alert-history-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 10px; }
+.alert-history-pager { margin-top: 12px; justify-content: flex-end; }
+
 .current-metrics-panel { padding: 4px 2px; }
 .current-metrics-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; margin-bottom: 14px; padding: 12px 14px; border: 1px solid #e3edf5; border-radius: 8px; background: #f8fbfe; }
 .current-metrics-head > div { display: flex; flex-direction: column; gap: 4px; }

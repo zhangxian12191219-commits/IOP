@@ -107,6 +107,10 @@
           <el-option :label="t('alerts.unacknowledged')" :value="false" />
           <el-option :label="t('alerts.acknowledged')" :value="true" />
         </el-select>
+        <el-select v-model="filters.resolved" placeholder="恢复状态" clearable style="width: 130px" @change="onFilterChange">
+          <el-option label="未恢复" :value="false" />
+          <el-option label="已恢复" :value="true" />
+        </el-select>
         <el-select v-model="filters.days" :placeholder="t('alerts.allTime')" clearable style="width: 130px" @change="onFilterChange">
           <el-option :label="t('alerts.last1Day')" :value="1" />
           <el-option :label="t('alerts.last7Days')" :value="7" />
@@ -720,6 +724,7 @@ const filters = reactive({
   source: '',
   ack: '',
   days: '',
+  resolved: '',
   search: '',
 })
 const deviceOptions = ref([])
@@ -999,6 +1004,7 @@ function buildParams() {
   if (filters.days) params.days = filters.days
   if (filters.search) params.search = filters.search
   if (filters.ack === true || filters.ack === false) params.acknowledged = filters.ack
+  if (filters.resolved === true || filters.resolved === false) params.resolved = filters.resolved
   return params
 }
 
@@ -1062,6 +1068,7 @@ function resetFilters() {
     source: '',
     ack: '',
     days: '',
+    resolved: '',
     search: '',
   })
   onFilterChange()

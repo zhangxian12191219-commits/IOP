@@ -16,7 +16,25 @@ from ..services.auth import (
 )
 from ..services import audit
 from ..services import password_policy
+from ..services import security as security_service
 from ..services import settings as settings_service
+
+# 后端权限目录（auth.pye）之外补充的权限点：即时通信
+EXTRA_PERMISSIONS = [
+    {
+        "code": "im:view",
+        "name": "查看即时通信",
+        "module": "即时通信",
+        "description": "查看即时通信会话、联系人和消息",
+    },
+    {
+        "code": "im:edit",
+        "name": "管理即时通信",
+        "module": "即时通信",
+        "description": "发送消息、管理会话与群组",
+    },
+]
+EXTRA_PERMISSION_CODES = {item["code"] for item in EXTRA_PERMISSIONS}
 
 users_router = APIRouter(prefix="/api/users", tags=["用户管理"])
 roles_router = APIRouter(prefix="/api/roles", tags=["角色管理"])
@@ -107,7 +125,7 @@ def _user_audit_snapshot(user: User) -> dict:
 def list_permissions(current: User = Depends(_require_superuser)):
     """权限点目录（仅超级管理员，按模块分组，供角色配置）"""
     grouped: Dict[str, List[dict]] = {}
-    for item in PERMISSIONS:
+    for item in list(PERMISSIONS) + list(EXTRA_PERMISSIONS):
         grouped.setdefault(item["module"], []).append({
             "code": item["code"],
             "name": item["name"],
@@ -115,10 +133,10 @@ def list_permissions(current: User = Depends(_require_superuser)):
             "description": item.get("description", ""),
         })
     return {
-        "all": PERMISSIONS,
+        "all": list(PERMISSIONS) + list(EXTRA_PERMISSIONS),
         "grouped": [{"module": k, "permissions": v} for k, v in grouped.items()],
         "special": [{"code": "*", "name": "全部权限（超级角色）"}],
-        "total": len(ALL_PERMISSIONS),
+        "total": len(ALL_PERMISSIONS) + len(EXTRA_PERMISSIONS),
     }
 
 
@@ -142,10 +160,16 @@ def list_users(
         query = query.filter(User.roles.any(Role.id == role_id))
 
     users = query.order_by(User.id).all()
-    return {
-        "total": len(users),
-        "items": [user_to_dict(u) for u in users],
-    }
+    items = []
+    for user in users:
+        row = user_to_dict(user)
+        lock = security_service.get_lock(db, user.username)
+        row["is_locked"] = bool(lock)
+        row["locked_until"] = lock["locked_until"].isoformat() if lock and lock.get("locked_until") else None
+        row["lock_seconds_left"] = lock["seconds_left"] if lock else 0
+        row["failed_login_count"] = lock["fail_count"] if lock else 0
+        items.append(row)
+    return {"total": len(users), "items": items}
 
 
 @users_router.post("")
@@ -161,6 +185,10 @@ def create_user(
         raise HTTPException(status_code=400, detail="用户名已存在")
     if payload.is_superuser and not current.is_superuser:
         raise HTTPException(status_code=403, detail="只有超级管理员可以创建超级管理员")
+    if not payload.role_ids:
+        raise HTTPException(status_code=400, detail="新建用户必须至少归属一个角色权限")
+    if not payload.group_ids:
+        raise HTTPException(status_code=400, detail="新建用户必须至少归属一个资产组权限")
 
     password_policy.validate_password(db, payload.password)
     user = User(
@@ -188,6 +216,29 @@ def create_user(
         message=f"新增用户 {user.username}",
     )
     return user_to_dict(user)
+
+
+@users_router.get("/me/access")
+def get_my_access(
+    db: Session = Depends(get_db),
+    current: User = Depends(get_current_user),
+):
+    """当前用户的原始角色权限与资产组范围。
+
+    不使用 auth 模块的权限继承展开结果，确保“不可见”功能不会被
+    同一模块的父权限（如 assets:view）隐式带出。
+    """
+    permissions = sorted({
+        code
+        for role in (current.roles or [])
+        for code in (role.permissions or [])
+        if code
+    })
+    return {
+        "permissions": permissions,
+        "role_ids": sorted(role.id for role in (current.roles or [])),
+        "group_ids": sorted(group.id for group in (current.groups or [])),
+    }
 
 
 @users_router.get("/me")
@@ -310,6 +361,12 @@ def update_user(
     if "group_ids" in data:
         _bind_groups(db, user, data["group_ids"] or [])
 
+    if not user.is_superuser:
+        if not user.roles:
+            raise HTTPException(status_code=400, detail="用户必须至少归属一个角色权限")
+        if not user.groups:
+            raise HTTPException(status_code=400, detail="用户必须至少归属一个资产组权限")
+
     user.updated_at = datetime.utcnow()
     db.commit()
     db.refresh(user)
@@ -323,6 +380,24 @@ def update_user(
         message=f"更新用户 {user.username}",
     )
     return user_to_dict(user)
+
+
+@users_router.post("/{user_id}/unlock")
+def unlock_user(
+    user_id: int,
+    request: Request,
+    db: Session = Depends(get_db),
+    current: User = Depends(_require_superuser),
+):
+    """超级管理员手动解除用户登录失败锁定。"""
+    user = _get_user(db, user_id)
+    security_service.clear_failures(db, user.username)
+    audit.record(
+        db, request, module="users", action="unlock",
+        target_type="user", target_id=user.id, target_name=user.username,
+        message=f"解除用户 {user.username} 的登录锁定",
+    )
+    return {"message": "用户已解锁", "is_locked": False, "locked_until": None}
 
 
 @users_router.post("/{user_id}/reset-password")
@@ -452,7 +527,7 @@ def update_role(
         if role.code == "admin":
             raise HTTPException(status_code=400, detail="内置超级管理员角色的权限不可修改")
         perms = data["permissions"] or []
-        unknown = [p for p in perms if p != "*" and p not in ALL_PERMISSIONS]
+        unknown = [p for p in perms if p != "*" and p not in ALL_PERMISSIONS and p not in EXTRA_PERMISSION_CODES]
         if unknown:
             raise HTTPException(status_code=400, detail=f"未知权限点: {', '.join(unknown)}")
         role.permissions = perms

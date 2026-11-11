@@ -19,7 +19,7 @@ from ..services.virtualization_crypto import encrypt_password
 
 router = APIRouter(prefix="/api/virtualization", tags=["虚拟化管理"])
 
-PLATFORM_TYPES = {"vmware", "kvm", "cas", "proxmox", "docker", "kubernetes"}
+PLATFORM_TYPES = {"vmware", "kvm", "cas", "proxmox", "docker", "kubernetes", "openstack"}
 POWER_STATES = {"running", "stopped", "paused", "unknown"}
 TOP_METRICS = {"cpu_usage", "memory_usage", "disk_usage"}
 
@@ -71,6 +71,8 @@ class PlatformPayload(BaseModel):
     port: Optional[int] = Field(None, ge=1, le=65535)
     username: str = Field(..., min_length=1, max_length=120)
     password: Optional[str] = Field(None, max_length=500)
+    project_name: Optional[str] = Field(None, max_length=120)
+    domain_name: Optional[str] = Field(None, max_length=120)
     verify_tls: bool = True
     enabled: bool = True
     sync_interval_minutes: int = Field(5, ge=1, le=1440)
@@ -126,6 +128,8 @@ def _platform_dict(platform: VirtualPlatform, host_count: int = 0, vm_count: int
         "address": platform.address,
         "port": platform.port,
         "username": platform.username,
+        "project_name": platform.project_name or "",
+        "domain_name": platform.domain_name or "",
         "password_set": bool(platform.password_enc),
         "verify_tls": bool(platform.verify_tls),
         "enabled": bool(platform.enabled),
@@ -203,9 +207,11 @@ def _host_dict(host: VirtualHost, platform: Optional[VirtualPlatform] = None) ->
 def _validate_payload(payload: PlatformPayload) -> str:
     platform_type = (payload.platform_type or "").strip().lower()
     if platform_type not in PLATFORM_TYPES:
-        raise HTTPException(status_code=400, detail="平台类型只支持 vmware、cas、proxmox、kvm、docker 或 kubernetes")
+        raise HTTPException(status_code=400, detail="平台类型只支持 vmware、cas、proxmox、kvm、docker、kubernetes 或 openstack")
     if not payload.address.strip():
         raise HTTPException(status_code=400, detail="平台地址不能为空")
+    if platform_type == "openstack" and not str(payload.project_name or "").strip():
+        raise HTTPException(status_code=400, detail="OpenStack 必须填写项目/租户")
     return platform_type
 
 
@@ -216,6 +222,7 @@ def _default_port(platform_type: str) -> int:
         else 8080 if platform_type == "cas"
         else 2375 if platform_type == "docker"
         else 6443 if platform_type == "kubernetes"
+        else 5000 if platform_type == "openstack"
         else 22
     )
 
@@ -231,6 +238,8 @@ def _apply_payload(platform: VirtualPlatform, payload: PlatformPayload, platform
     elif platform_type == "proxmox":
         username = virtualization_service.normalize_proxmox_username(username)
     platform.username = username
+    platform.project_name = (payload.project_name or "").strip() or None
+    platform.domain_name = (payload.domain_name or "").strip() or "Default"
     platform.verify_tls = bool(payload.verify_tls)
     platform.enabled = bool(payload.enabled)
     platform.sync_interval_minutes = payload.sync_interval_minutes
@@ -269,6 +278,8 @@ def create_platform(payload: PlatformPayload, db: Session = Depends(get_db)):
             else payload.username.strip()
         ),
         password_enc=encrypt_password(payload.password),
+        project_name=(payload.project_name or "").strip() or None,
+        domain_name=(payload.domain_name or "").strip() or "Default",
         verify_tls=payload.verify_tls,
         enabled=payload.enabled,
         sync_interval_minutes=payload.sync_interval_minutes,

@@ -433,6 +433,7 @@ def list_users(db: Session = Depends(get_db), current: User = Depends(auth_servi
         db.query(ChatMessage.sender_id, func.count(ChatMessage.id))
         .filter(
             ChatMessage.recipient_id == current.id,
+            ChatMessage.message_type != "whiteboard",
             ChatMessage.read_at.is_(None),
             ChatMessage.recalled_at.is_(None),
             ChatMessage.created_at >= datetime.utcnow() - timedelta(days=CHAT_RETENTION_DAYS),
@@ -471,6 +472,7 @@ def list_messages(
             and_(ChatMessage.sender_id == current.id, ChatMessage.recipient_id == peer_id),
             and_(ChatMessage.sender_id == peer_id, ChatMessage.recipient_id == current.id),
         ), ChatMessage.group_id.is_(None),
+            ChatMessage.message_type != "whiteboard",
             ChatMessage.created_at >= retention_cutoff, _visible_message_filter(current.id))
         .order_by(ChatMessage.created_at.asc())
         .limit(limit)
@@ -952,6 +954,94 @@ def list_group_whiteboard(
 
 
 
+
+
+@router.get("/direct/{peer_id}/whiteboard")
+def list_direct_whiteboard(
+    peer_id: int,
+    limit: int = Query(500, ge=1, le=1000),
+    db: Session = Depends(get_db),
+    current: User = Depends(auth_service.get_current_user),
+):
+    """单聊白板笔画（15 天保留期，按时间升序返回）。"""
+    peer = db.query(User).filter(User.id == peer_id, User.is_active == True).first()  # noqa: E712
+    if not peer or peer.id == current.id:
+        raise HTTPException(status_code=404, detail="单聊对象不存在")
+    retention_cutoff = datetime.utcnow() - timedelta(days=CHAT_RETENTION_DAYS)
+    pair_filter = or_(
+        and_(ChatMessage.sender_id == current.id, ChatMessage.recipient_id == peer.id),
+        and_(ChatMessage.sender_id == peer.id, ChatMessage.recipient_id == current.id),
+    )
+    rows = (
+        db.query(ChatMessage)
+        .filter(
+            ChatMessage.group_id.is_(None),
+            ChatMessage.message_type == "whiteboard",
+            ChatMessage.created_at >= retention_cutoff,
+            pair_filter,
+        )
+        .order_by(ChatMessage.created_at.desc(), ChatMessage.id.desc())
+        .limit(limit)
+        .all()
+    )
+    rows.reverse()
+    strokes = []
+    for row in rows:
+        try:
+            payload = json.loads(row.content or "{}")
+        except (TypeError, ValueError):
+            continue
+        stroke = payload.get("stroke") if isinstance(payload, dict) else None
+        if not isinstance(stroke, dict):
+            continue
+        strokes.append({
+            **stroke,
+            "id": f"wb-{row.id}",
+            "sender_id": row.sender_id,
+            "created_at": row.created_at.isoformat() if row.created_at else None,
+        })
+    return {
+        "peer_id": peer.id,
+        "strokes": strokes,
+        "board_id": "main",
+        "retention_days": CHAT_RETENTION_DAYS,
+    }
+
+
+def _direct_whiteboard_strokes(db: Session, user_id: int, peer_id: int, limit: int = 500) -> List[dict]:
+    retention_cutoff = datetime.utcnow() - timedelta(days=CHAT_RETENTION_DAYS)
+    pair_filter = or_(
+        and_(ChatMessage.sender_id == user_id, ChatMessage.recipient_id == peer_id),
+        and_(ChatMessage.sender_id == peer_id, ChatMessage.recipient_id == user_id),
+    )
+    rows = (
+        db.query(ChatMessage)
+        .filter(
+            ChatMessage.group_id.is_(None),
+            ChatMessage.message_type == "whiteboard",
+            ChatMessage.created_at >= retention_cutoff,
+            pair_filter,
+        )
+        .order_by(ChatMessage.created_at.desc(), ChatMessage.id.desc())
+        .limit(limit)
+        .all()
+    )
+    rows.reverse()
+    strokes = []
+    for row in rows:
+        try:
+            payload = json.loads(row.content or "{}")
+        except (TypeError, ValueError):
+            continue
+        stroke = payload.get("stroke") if isinstance(payload, dict) else None
+        if isinstance(stroke, dict):
+            strokes.append({
+                **stroke,
+                "id": f"wb-{row.id}",
+                "sender_id": row.sender_id,
+                "created_at": row.created_at.isoformat() if row.created_at else None,
+            })
+    return strokes
 
 
 def _split_webrtc_urls(raw: str) -> List[str]:
@@ -1590,6 +1680,154 @@ def _whiteboard_strokes(db: Session, group_id: int, user_id: int, limit: int = 5
     return strokes
 
 
+async def _broadcast_direct_whiteboard(
+    websocket: WebSocket, user_id: int, peer_id: int, payload: dict, include_self: bool = True
+) -> None:
+    if include_self:
+        await websocket.send_json(payload)
+    if peer_id != user_id:
+        await manager.send_to(peer_id, payload)
+
+
+async def _handle_direct_whiteboard_event(
+    websocket: WebSocket, db: Session, user: User, payload: dict, msg_type: str
+) -> None:
+    try:
+        peer_id = int(payload.get("peer_id"))
+    except (TypeError, ValueError):
+        await _ws_error(websocket, "单聊白板对象不合法")
+        return
+    peer = db.query(User).filter(User.id == peer_id, User.is_active == True).first()  # noqa: E712
+    if not peer or peer.id == user.id:
+        await _ws_error(websocket, "单聊白板对象不存在")
+        return
+    board_id = im_group_service.normalize_board_id(payload.get("board_id"))
+    pair_filter = or_(
+        and_(ChatMessage.sender_id == user.id, ChatMessage.recipient_id == peer.id),
+        and_(ChatMessage.sender_id == peer.id, ChatMessage.recipient_id == user.id),
+    )
+
+    if msg_type == "whiteboard-sync":
+        await websocket.send_json({
+            "type": "whiteboard-state",
+            "peer_id": peer.id,
+            "board_id": board_id,
+            "strokes": _direct_whiteboard_strokes(db, user.id, peer.id),
+        })
+        await manager.send_to(peer.id, {
+            "type": "whiteboard-active",
+            "peer_id": peer.id,
+            "board_id": board_id,
+            "from": _user_dict(user, True),
+            "at": datetime.utcnow().isoformat(),
+        })
+        return
+
+    if msg_type == "whiteboard-draw":
+        stroke = im_group_service.sanitize_stroke(payload.get("stroke"))
+        if not stroke:
+            await _ws_error(websocket, "白板笔画数据不合法", peer_id=peer.id)
+            return
+        temp_id = str((payload.get("stroke") or {}).get("temp_id") or "")[:80]
+        content = json.dumps(
+            {"board_id": board_id, "stroke": stroke},
+            ensure_ascii=False,
+            separators=(",", ":"),
+        )
+        if len(content) > im_group_service.MAX_STROKE_CONTENT_CHARS:
+            await _ws_error(websocket, "白板笔画数据过大", peer_id=peer.id)
+            return
+        message = ChatMessage(
+            sender_id=user.id,
+            recipient_id=peer.id,
+            group_id=None,
+            content=content,
+            message_type="whiteboard",
+        )
+        try:
+            db.add(message)
+            db.commit()
+            db.refresh(message)
+        except Exception as exc:  # noqa: BLE001
+            db.rollback()
+            logger.warning("单聊白板笔画写入失败（%s -> %s）: %s", user.id, peer.id, exc)
+            await _ws_error(websocket, "白板笔画保存失败", peer_id=peer.id)
+            return
+        outgoing_stroke = {
+            **stroke,
+            "id": f"wb-{message.id}",
+            "temp_id": temp_id or None,
+            "sender_id": user.id,
+            "created_at": message.created_at.isoformat() if message.created_at else None,
+        }
+        await _broadcast_direct_whiteboard(websocket, user.id, peer.id, {
+            "type": "whiteboard-stroke",
+            "peer_id": peer.id,
+            "board_id": board_id,
+            "from": _user_dict(user, True),
+            "stroke": outgoing_stroke,
+        })
+        return
+
+    if msg_type == "whiteboard-clear":
+        db.query(ChatMessage).filter(
+            ChatMessage.group_id.is_(None),
+            ChatMessage.message_type == "whiteboard",
+            pair_filter,
+        ).delete(synchronize_session=False)
+        db.commit()
+        await _broadcast_direct_whiteboard(websocket, user.id, peer.id, {
+            "type": "whiteboard-clear",
+            "peer_id": peer.id,
+            "board_id": board_id,
+            "from": _user_dict(user, True),
+        })
+        return
+
+    if msg_type == "whiteboard-undo":
+        target = (
+            db.query(ChatMessage)
+            .filter(
+                ChatMessage.group_id.is_(None),
+                ChatMessage.message_type == "whiteboard",
+                ChatMessage.sender_id == user.id,
+                ChatMessage.recipient_id == peer.id,
+            )
+            .order_by(ChatMessage.created_at.desc(), ChatMessage.id.desc())
+            .first()
+        )
+        stroke_id = None
+        if target:
+            stroke_id = f"wb-{target.id}"
+            db.delete(target)
+            db.commit()
+        await _broadcast_direct_whiteboard(websocket, user.id, peer.id, {
+            "type": "whiteboard-undo",
+            "peer_id": peer.id,
+            "board_id": board_id,
+            "from": _user_dict(user, True),
+            "stroke_id": stroke_id,
+        })
+        return
+
+    if msg_type == "whiteboard-pointer":
+        pointer = im_group_service.sanitize_pointer({
+            "x": payload.get("x"),
+            "y": payload.get("y"),
+            "visible": payload.get("visible", True),
+        })
+        if not pointer:
+            return
+        await _broadcast_direct_whiteboard(websocket, user.id, peer.id, {
+            "type": "whiteboard-pointer",
+            "peer_id": peer.id,
+            "board_id": board_id,
+            "from": _user_dict(user, True),
+            **pointer,
+        }, include_self=False)
+        return
+
+
 async def _handle_whiteboard_event(
     websocket: WebSocket, db: Session, user: User, payload: dict, msg_type: str
 ) -> None:
@@ -1606,6 +1844,13 @@ async def _handle_whiteboard_event(
             "board_id": board_id,
             "strokes": _whiteboard_strokes(db, group.id, user.id),
         })
+        await _broadcast_group(db, group.id, {
+            "type": "whiteboard-active",
+            "group_id": group.id,
+            "board_id": board_id,
+            "from": _user_dict(user, True),
+            "at": datetime.utcnow().isoformat(),
+        }, exclude_user_id=user.id)
         return
 
     if msg_type == "whiteboard-draw":
@@ -1739,7 +1984,10 @@ async def chat_websocket(websocket: WebSocket, token: str = Query("")):
                 await _handle_group_call_event(websocket, db, user, payload, msg_type)
                 continue
             if msg_type in WHITEBOARD_TYPES:
-                await _handle_whiteboard_event(websocket, db, user, payload, msg_type)
+                if payload.get("peer_id") and not payload.get("group_id"):
+                    await _handle_direct_whiteboard_event(websocket, db, user, payload, msg_type)
+                else:
+                    await _handle_whiteboard_event(websocket, db, user, payload, msg_type)
                 continue
             if msg_type == "group-typing" or (msg_type == "typing" and payload.get("group_id")):
                 await _handle_group_typing(websocket, db, user, payload)

@@ -4,15 +4,27 @@
       <header class="im-wb-head">
         <div class="im-wb-title">
           <el-icon><EditPen /></el-icon>
-          <strong>群白板</strong>
+          <strong>{{ whiteboardTitle }}</strong>
           <span class="im-wb-group">{{ groupName }}</span>
           <el-tag size="small" effect="plain" round>
             {{ imState.whiteboard.loading ? '加载中…' : `${imState.whiteboard.strokes.length} 笔` }}
           </el-tag>
         </div>
         <div class="im-wb-tools">
-          <el-color-picker v-model="color" size="small" :predefine="predefineColors" title="画笔颜色" />
-          <el-select v-model="width" size="small" class="im-wb-width" title="笔触粗细">
+          <el-color-picker
+            v-model="color"
+            size="small"
+            :predefine="predefineColors"
+            popper-class="im-wb-color-popper"
+            title="画笔颜色"
+          />
+          <el-select
+            v-model="width"
+            size="small"
+            class="im-wb-width"
+            popper-class="im-wb-width-popper"
+            title="笔触粗细"
+          >
             <el-option v-for="item in widths" :key="item" :label="`${item}px`" :value="item" />
           </el-select>
           <div class="im-wb-tool-group">
@@ -51,6 +63,13 @@
       >
         <canvas ref="canvasRef" class="im-wb-canvas"></canvas>
         <span
+          v-if="localLaser"
+          class="im-wb-pointer is-local"
+          :style="{ left: `${localLaser.x * 100}%`, top: `${localLaser.y * 100}%` }"
+        >
+          <i></i><em>我</em>
+        </span>
+        <span
           v-for="pointer in pointers"
           :key="pointer.id"
           class="im-wb-pointer"
@@ -61,14 +80,21 @@
         <div v-if="!imState.whiteboard.strokes.length && !drawing" class="im-wb-empty">
           <el-icon :size="30"><EditPen /></el-icon>
           <strong>一起画点什么</strong>
-          <span>群成员会实时看到你的笔迹；笔画只保留 15 天。</span>
+          <span>群成员或单聊双方会实时看到你的笔迹；笔画只保留 15 天。</span>
         </div>
         <div class="im-wb-hint">画笔 / 橡皮支持拖拽绘制 · 激光仅实时指示不保存</div>
+        <div v-if="clearConfirm" class="im-wb-clear-confirm" @pointerdown.stop>
+          <span>清空后当前白板的全部笔画都会被删除（单聊双方 / 群聊所有成员），且无法恢复。是否继续？</span>
+          <div class="im-wb-clear-actions">
+            <el-button size="small" @click="clearConfirm = false">取消</el-button>
+            <el-button size="small" type="danger" @click="confirmClearWhiteboard">确定清空</el-button>
+          </div>
+        </div>
       </div>
 
       <footer class="im-wb-foot">
         <span>当前工具：{{ currentToolLabel }} · 颜色 {{ color }} · 粗细 {{ width }}px</span>
-        <span>白板内容与群消息一样只保留 {{ imState.retentionDays || 15 }} 天</span>
+        <span>白板内容与聊天消息一样只保留 {{ imState.retentionDays || 15 }} 天</span>
       </footer>
     </div>
   </div>
@@ -76,7 +102,7 @@
 
 <script setup>
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import { ElMessage, ElMessageBox } from 'element-plus'
+import { ElMessage } from 'element-plus'
 import { Aim, Brush, EditPen } from '@element-plus/icons-vue'
 import {
   closeWhiteboard, clearWhiteboard, imState, sendWhiteboardPointer,
@@ -98,10 +124,17 @@ const toolOptions = [
 
 let drawing = false
 let currentStroke = null
+const localLaser = ref(null)
+const clearConfirm = ref(false)
 let resizeObserver = null
 let dpr = 1
 
+const whiteboardTitle = computed(() => imState.whiteboard.peerId ? '单聊白板' : '群白板')
 const groupName = computed(() => {
+  if (imState.whiteboard.peerId) {
+    const peer = (imState.users || []).find((item) => Number(item.id) === Number(imState.whiteboard.peerId))
+    return peer?.real_name || peer?.username || '单聊对象'
+  }
   const group = imState.groups.find((item) => item.id === imState.whiteboard.groupId)
   return group?.name || '群组'
 })
@@ -116,6 +149,7 @@ watch(width, (value) => value && localStorage.setItem('nms_im_wb_width', String(
 watch(() => imState.whiteboard.strokes, () => redraw(), { deep: false })
 watch(() => imState.whiteboard.open, async (open) => {
   if (!open) {
+    clearConfirm.value = false
     resizeObserver?.disconnect()
     resizeObserver = null
     return
@@ -216,6 +250,7 @@ function onPointerDown(event) {
     }
   }
   if (tool.value === 'laser') {
+    localLaser.value = { x: point[0], y: point[1] }
     sendWhiteboardPointer(point[0], point[1], true)
     return
   }
@@ -234,6 +269,7 @@ function onPointerMove(event) {
   const point = localPoint(event)
   if (!point) return
   if (tool.value === 'laser') {
+    localLaser.value = { x: point[0], y: point[1] }
     sendWhiteboardPointer(point[0], point[1], true)
     return
   }
@@ -259,6 +295,7 @@ function onPointerMove(event) {
 
 function onPointerUp(event) {
   if (tool.value === 'laser') {
+    localLaser.value = null
     sendWhiteboardPointer(0, 0, false)
     return
   }
@@ -285,19 +322,18 @@ function onPointerUp(event) {
 }
 
 function onPointerLeave() {
-  if (tool.value === 'laser') sendWhiteboardPointer(0, 0, false)
+  if (tool.value === 'laser') {
+    localLaser.value = null
+    sendWhiteboardPointer(0, 0, false)
+  }
 }
 
-async function handleClear() {
-  try {
-    await ElMessageBox.confirm(
-      '清空后群内所有成员的白板笔画都会被删除，且无法恢复。是否继续？',
-      '清空白板',
-      { type: 'warning', confirmButtonText: '清空', cancelButtonText: '取消' },
-    )
-  } catch {
-    return
-  }
+function handleClear() {
+  clearConfirm.value = true
+}
+
+function confirmClearWhiteboard() {
+  clearConfirm.value = false
   clearWhiteboard()
 }
 
@@ -308,6 +344,11 @@ onBeforeUnmount(() => {
 </script>
 
 <style scoped>
+:global(.im-wb-color-popper),
+:global(.im-wb-width-popper) {
+  z-index: 6000 !important;
+}
+
 .im-wb-layer {
   position: fixed;
   inset: 0;
@@ -420,6 +461,11 @@ onBeforeUnmount(() => {
   border: 2px solid #fff;
   box-shadow: 0 0 10px rgba(244, 114, 182, .8);
 }
+.im-wb-pointer.is-local i {
+  background: #fde047;
+  border-color: #fff;
+  box-shadow: 0 0 12px rgba(253, 224, 71, .95);
+}
 .im-wb-pointer em {
   font-style: normal;
   font-size: 10px;
@@ -429,6 +475,36 @@ onBeforeUnmount(() => {
   padding: 1px 4px;
   white-space: nowrap;
 }
+.im-wb-clear-confirm {
+  position: absolute;
+  left: 50%;
+  bottom: 18px;
+  z-index: 5;
+  width: min(620px, calc(100% - 32px));
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 10px 12px;
+  border: 1px solid #f3b4b4;
+  border-radius: 9px;
+  background: #fff7f7;
+  box-shadow: 0 8px 28px rgba(15, 23, 42, .22);
+  color: #9f2424;
+  font-size: 12px;
+  line-height: 1.5;
+}
+.im-wb-clear-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+.im-wb-clear-actions :deep(.el-button + .el-button) {
+  margin-left: 0;
+}
+
 .im-wb-foot {
   display: flex;
   align-items: center;

@@ -6,7 +6,6 @@
     class="resource-share-dialog"
     :close-on-click-modal="false"
     @update:model-value="$emit('update:modelValue', $event)"
-    @open="load"
   >
     <div v-loading="loading" class="share-dialog-body">
       <el-alert
@@ -234,7 +233,7 @@ async function copyShareUrl() {
 
 watch(() => props.modelValue, (visible) => {
   if (visible) load()
-})
+}, { immediate: true })
 </script>
 
 <style scoped>

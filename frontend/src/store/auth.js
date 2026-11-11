@@ -84,7 +84,8 @@ export function can(permission) {
   const user = state.user
   if (!user) return false
   if (user.is_superuser) return true
-  return Array.isArray(user.permissions) && user.permissions.includes(permission)
+  if (!Array.isArray(user.permissions)) return false
+  return user.permissions.includes(permission) || user.permissions.includes('*')
 }
 
 export function setToken(token, remember = true) {
@@ -119,6 +120,25 @@ export function clearAuth() {
   setUser(null)
 }
 
+async function withRawPermissions(user) {
+  if (!user) return user
+  const token = getToken()
+  if (!token) return user
+  try {
+    const res = await axios.get('/api/users/me/access', {
+      headers: { Authorization: `Bearer ${token}` },
+    })
+    if (Array.isArray(res.data?.permissions)) {
+      user.permissions = res.data.permissions
+    }
+    if (Array.isArray(res.data?.role_ids)) user.role_ids = res.data.role_ids
+    if (Array.isArray(res.data?.group_ids)) user.group_ids = res.data.group_ids
+  } catch {
+    /* 保留登录接口返回值，避免权限接口暂时失败导致无法登录 */
+  }
+  return user
+}
+
 export async function login(username, password, options = {}) {
   const payload = { username, password }
   if (options.captchaId) payload.captcha_id = options.captchaId
@@ -127,8 +147,9 @@ export async function login(username, password, options = {}) {
   const res = await axios.post('/api/auth/login', payload)
   const { token, user } = res.data
   setToken(token, options.remember !== false)
-  setUser(user)
-  return user
+  const effectiveUser = await withRawPermissions(user)
+  setUser(effectiveUser)
+  return effectiveUser
 }
 
 /**
@@ -146,7 +167,7 @@ export async function refreshToken(display = false) {
   const data = res.data || {}
   if (!data.token) return null
   setToken(data.token, isRemembered())
-  if (data.user) setUser(data.user)
+  if (data.user) setUser(await withRawPermissions(data.user))
   return data.token
 }
 
@@ -157,8 +178,9 @@ export async function refreshMe() {
     const res = await axios.get('/api/auth/me', {
       headers: { Authorization: `Bearer ${token}` },
     })
-    setUser(res.data)
-    return res.data
+    const effectiveUser = await withRawPermissions(res.data)
+    setUser(effectiveUser)
+    return effectiveUser
   } catch {
     return null
   }

@@ -2,7 +2,7 @@
 
 An operations and monitoring platform for network devices, security devices, infrastructure, websites, and virtualized environments. It provides asset management, SNMP collection, topology, dashboards, alerts, inspections, data-center visualization, website/certificate monitoring, AI operations, cascade management, and system administration.
 
-- Product version: **v2.23.36**
+- Product version: **v2.24.12**
 - License Studio: **v2.10.2**
 - Backend: Python 3.10+ / FastAPI / SQLAlchemy
 - Frontend: Vue 3 / Vite / Element Plus / ECharts / AntV X6
@@ -29,19 +29,30 @@ An operations and monitoring platform for network devices, security devices, inf
 | Inspections | `/inspection` | Scheduled/manual inspections, Word reports, upload, preview |
 | Device backups | `/config-backups` | Network device configuration backups and history |
 | Discovery | `/discovery` | Network scanning, SNMP identification, bulk import |
-| Instant messaging | `/im` | Direct/group chat, audio/video calls, whiteboard |
+| Instant messaging | `/im` | Direct/group chat, audio/video calls, direct/group whiteboard with join invitations |
 | System tools | `/tools` | Ping, traceroute, SNMP walk, port probe, SSH, packet capture |
 | MIB management | `/mibs` | MIB import, vendor/model mapping, online MIB lookup, AI-assisted matching |
 | Rooms | `/rooms` | Rooms, racks, U positions, 3D digital twin |
-| Topology | `/topology` | Network nodes, links, layouts, LLDP discovery |
+| Topology | `/topology` | Network nodes, dual-control-point links, cloud exits, LLDP discovery, long-press box selection, wheel zoom and scrollbars |
 | Cascade | `/cascade` | Encrypted HQ/branch tunnels and data synchronization |
-| Virtualization | `/virtualization` | Read-only VMware, Proxmox, H3C CAS, KVM, Docker, Kubernetes management |
+| Virtualization | `/virtualization` | Read-only VMware, Proxmox, H3C CAS, OpenStack, KVM, Docker, Kubernetes management |
 | Website monitoring | `/website` | HTTP/HTTPS availability, status codes, response time, certificates |
 | Alert center | `/alerts` | Device, website, and virtualization alerts; acknowledge and history |
-| Alert channels | `/notifications` | Email, webhook, SMS, upstream platform |
+| Alert channels | `/notifications` | Email, webhook, SMS, upstream platform; event type and red/green markers for rich channels |
 | Audit logs | `/system/audit` | Login and administrative operation audit |
 | System settings | `/system/settings` | General, users, security, collection, backup, update, cluster, network, language |
 | License | `/system/license` | Machine code, edition, price, features, activation |
+
+### Access control and notifications
+
+- **Role permissions** control platform functions with three levels: invisible, read-only, and editable. Invisible hides the menu and route; read-only permits viewing; editable permits create/update/delete operations.
+- **Asset group access** controls which devices a user can see. Multiple asset groups are combined (union). Asset APIs apply the same scope.
+- New users must belong to at least one role and one asset group; the API enforces this.
+- Multiple roles combine permissions; superusers always have all permissions. The personal account page remains available to every user.
+- Outbound alerts and recoveries include an event type. Webhook/Markdown channels use red/green markers; email and SMS remain plain text.
+- Instant messaging is controlled by `im:view` / `im:edit`. Direct and group chats both provide a shared whiteboard with 15-day retention.
+- Opening a whiteboard notifies the other participant or online group members. They can join from the clickable notification and load existing strokes, then edit simultaneously.
+- Whiteboard stroke messages are excluded from normal chat history. Clearing a board uses an in-board confirmation that explains the impact on the direct chat/group.
 
 ### Asset-level alert rules
 
@@ -61,6 +72,17 @@ When no local MIB candidate exists, the operator can fetch vendor MIBs from the 
 - Confirmed VM alerts flash briefly, leave the current alert list, and move to alert history.
 - The alert center aggregates device, website, and virtualization alerts.
 - All alert sources can be filtered and acknowledged from the alert center.
+
+### Topology editing highlights
+
+- Drag between devices to create links; failed submissions retry automatically and are idempotent.
+- Double-click a device link to edit endpoints, interfaces and anchors; deletion stays in the link details panel with confirmation.
+- Links support two independent control points for both end angles; offsets and anchors persist with the layout.
+- Crossed links render bridge arcs and gaps instead of visually merging.
+- Long-press the left button for 1.5 seconds before box selection; Ctrl adds to the selection and Esc cancels.
+- Edit mode supports plain mouse-wheel zoom, independent scrollbars, centered initial view and Fit to Canvas.
+- Cloud/Internet exit nodes support rename, drag, anchors and persistent layout; their traffic comes from the connected device interface.
+- LLDP discovery is placed to the right of Reset Layout.
 
 ## 2. License editions
 
@@ -109,8 +131,8 @@ sudo dnf install -y python3 python3-pip tar curl unzip
 The release bundle includes a standalone Linux x86_64 Python 3.12 runtime compressed with xz, a static busybox extractor, all required Python wheels, and the built frontend. No Internet, system Python, pip, or apt/dnf package download is required.
 
 ```bash
-unzip IOP-v2.23.36.zip -d /tmp
-cd /tmp/IOP-v2.23.36
+unzip IOP-v2.24.12.zip -d /tmp
+cd /tmp/IOP-v2.24.12
 sudo bash deploy/apply-permissions.sh
 sudo bash deploy/install-offline.sh
 ```
@@ -120,8 +142,8 @@ Requirements: Linux x86_64, glibc 2.17+, systemd, bash/coreutils/sed/grep/awk. I
 ### Install
 
 ```bash
-unzip IOP-v2.23.36.zip -d /tmp
-cd /tmp/IOP-v2.23.36
+unzip IOP-v2.24.12.zip -d /tmp
+cd /tmp/IOP-v2.24.12
 
 # Fix executable bits if the extraction tool dropped them
 bash deploy/apply-permissions.sh
@@ -364,7 +386,7 @@ Passwords, tokens, API keys, private keys, license files and database content ar
 ## 11. Directory layout
 
 ```text
-IOP-v2.23.36/
+IOP-v2.24.12/
 ├── backend/
 ├── frontend/
 ├── deploy/
@@ -402,4 +424,4 @@ See [LICENSE](LICENSE) for the full text. The release package includes `LICENSE`
 
 ## 14. Version
 
-This README corresponds to SNMP Monitor **v2.23.36**. Verify the server, network devices, database, and license before deployment.
+This README corresponds to SNMP Monitor **v2.24.12**. Verify the server, network devices, database, and license before deployment.

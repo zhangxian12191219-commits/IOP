@@ -36,6 +36,19 @@ def _fmt(value: Any) -> str:
     return "-" if value is None else str(value)
 
 
+def _event_labels(payload: Dict[str, Any]) -> tuple[str, str, str]:
+    """返回事件类型、级别显示文字和标题前缀。
+
+    warning 的级别文字本身就是“告警”，标题里不能再拼一次 [告警]，
+    否则会出现 [告警][告警]。
+    """
+    level = LEVEL_TEXT.get(payload.get("level", "warning"), "告警")
+    if payload.get("recovery"):
+        return "恢复", level, "[恢复]"
+    level_tag = "" if level == "告警" else f"[{level}]"
+    return "告警", level, f"[告警]{level_tag}"
+
+
 def _clean_location(value: Any) -> str:
     """过滤 SNMP 设备位置常见的 unknown/未知 占位值。"""
     text = str(value or "").strip()
@@ -97,18 +110,27 @@ def build_message(payload: Dict[str, Any], compact: bool = False) -> tuple[str, 
     atype = ALERT_TYPE_TEXT.get(payload.get("alert_type") or "", payload.get("alert_type") or "告警")
     name = payload.get("device_name") or payload.get("ip_address") or "设备"
     is_recovery = bool(payload.get("recovery"))
+    event_type, level_text, title_prefix = _event_labels(payload)
+
+    source = payload.get("source") or "device"
+    source_text = {
+        "website": "网站监控",
+        "virtualization": "虚拟化告警",
+        "device": "设备告警",
+    }.get(source, "告警")
 
     if is_recovery:
         recovered_at = _local_time_text(payload.get("recovered_at") or datetime.now(timezone.utc))
         if compact:
-            text = f"【已恢复】{name} {atype} 当前值 {_fmt(payload.get('value'))}，原阈值 {_fmt(payload.get('threshold'))}"
+            text = f"事件类型：恢复；{name} {atype} 当前值 {_fmt(payload.get('value'))}，原阈值 {_fmt(payload.get('threshold'))}"
             if len(text) > 120:
                 text = text[:118] + "…"
-            return f"【已恢复】{name}", text
-        title = f"[已恢复] 设备告警恢复 - {name}"
+            return f"【恢复】{name}", text
+        title = f"[恢复] {source_text}恢复 - {name}"
         lines = [
-            f"设备名称：{name}",
-            f"设备地址：{_fmt(payload.get('ip_address'))}",
+            f"事件类型：恢复",
+            f"告警对象：{name}",
+            f"对象地址：{_fmt(payload.get('ip_address'))}",
             *_location_lines(payload),
             f"告警类型：{atype}",
             f"当前值：{_fmt(payload.get('value'))}    原阈值：{_fmt(payload.get('threshold'))}",
@@ -124,8 +146,9 @@ def build_message(payload: Dict[str, Any], compact: bool = False) -> tuple[str, 
         node_prefix = ""
         if payload.get("source") == "upstream":
             node_prefix = f"[{payload.get('source_node_name') or payload.get('source_node_id') or '上级节点'}] "
-        title = f"【{level}】{name}"
-        text = f"【{level}】{node_prefix}{name} {raw} ({when})"
+        title = f"【告警】{name}"
+        level_suffix = "" if level == "告警" else f"[{level}]"
+        text = f"事件类型：告警；{level_suffix}{node_prefix}{name} {raw} ({when})"
         if len(text) > 120:
             text = text[:118] + "…"
         return title, text
@@ -135,8 +158,10 @@ def build_message(payload: Dict[str, Any], compact: bool = False) -> tuple[str, 
         node_id = payload.get("source_node_id") or "-"
         origin = payload.get("origin_source") or "device"
         origin_text = "网站监控" if origin == "website" else "设备告警"
-        title = f"[{level}] {node_name} · {atype}"
+        title = f"{title_prefix} {node_name} · {atype}"
         lines = [
+            f"事件类型：告警",
+            f"告警级别：{level_text}",
             f"来源节点：{node_name}",
             f"节点标识：{node_id}",
             f"原始来源：{origin_text}",
@@ -149,17 +174,32 @@ def build_message(payload: Dict[str, Any], compact: bool = False) -> tuple[str, 
             f"发生时间：{_local_time_text(payload.get('created_at') or datetime.now(timezone.utc))}",
             f"来源地址：{payload.get('source_url') or '-'}",
         ]
-    elif payload.get("source") == "website":
-        title = f"[{level}] 网站监控告警 - {name}"
+    elif payload.get("source") == "virtualization":
+        title = f"{title_prefix} 虚拟化告警 - {name}"
         lines = [
+            f"事件类型：告警",
+            f"告警级别：{level_text}",
+            f"告警对象：{name}",
+            f"告警类型：{atype}",
+            f"当前值：{_fmt(payload.get('value'))}    阈值：{_fmt(payload.get('threshold'))}",
+            f"告警原文：{payload.get('message') or '-'}",
+            f"发生时间：{_local_time_text(payload.get('created_at') or datetime.now(timezone.utc))}",
+        ]
+    elif payload.get("source") == "website":
+        title = f"{title_prefix} 网站监控告警 - {name}"
+        lines = [
+            f"事件类型：告警",
+            f"告警级别：{level_text}",
             f"监控对象：{name}",
             f"告警类型：{atype}",
             f"告警原文：{payload.get('message') or '-'}",
             f"发生时间：{_local_time_text(payload.get('created_at') or datetime.now(timezone.utc))}",
         ]
     else:
-        title = f"[{level}] 设备告警 - {name}"
+        title = f"{title_prefix} 设备告警 - {name}"
         lines = [
+            f"事件类型：告警",
+            f"告警级别：{level_text}",
             f"设备名称：{name}",
             f"设备地址：{_fmt(payload.get('ip_address'))}",
             *_location_lines(payload),

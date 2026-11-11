@@ -96,6 +96,13 @@ def _style_header(ws) -> None:
         ws.column_dimensions[get_column_letter(idx)].width = width
 
 
+
+def _safe_excel_cell(value):
+    """阻止 CSV/Excel 公式注入：用户可控文本不能以公式前缀开头。"""
+    if isinstance(value, str) and value and value[0] in ("=", "+", "-", "@", "\t", "\r"):
+        return "'" + value
+    return value
+
 def export_xlsx(items: List[Dict[str, Any]]) -> bytes:
     wb = Workbook()
     ws = wb.active
@@ -104,7 +111,7 @@ def export_xlsx(items: List[Dict[str, Any]]) -> bytes:
 
     for row_idx, row in enumerate(_rows(items), start=2):
         for col_idx, value in enumerate(row, start=1):
-            ws.cell(row=row_idx, column=col_idx, value=value)
+            ws.cell(row=row_idx, column=col_idx, value=_safe_excel_cell(value))
     ws.freeze_panes = "A2"
     if items:
         ws.auto_filter.ref = f"A1:{get_column_letter(len(COLUMNS))}{len(items) + 1}"
@@ -132,6 +139,6 @@ def export_csv(items: List[Dict[str, Any]]) -> bytes:
     writer = csv.writer(buf)
     writer.writerow([header for header, _key, _width in COLUMNS])
     for row in _rows(items):
-        writer.writerow(row)
+        writer.writerow([_safe_excel_cell(value) for value in row])
     # 带 BOM，避免 Excel 打开中文乱码
     return buf.getvalue().encode("utf-8-sig")

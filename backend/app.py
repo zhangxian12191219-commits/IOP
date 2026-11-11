@@ -634,14 +634,14 @@ async def auth_middleware(request: Request, call_next):
         if (
             path.startswith(("/api/users", "/api/roles", "/api/groups"))
             and not user.is_superuser
-            and path.rstrip("/") != "/api/users/me"
+            and path.rstrip("/") not in ("/api/users/me", "/api/users/me/access")
         ):
             return JSONResponse(
                 {"detail": "用户/角色/群组管理仅超级管理员可操作"},
                 status_code=403,
             )
 
-        need = auth.required_permission(method, path)
+        need = None if path.rstrip("/") == "/api/users/me/access" else auth.required_permission(method, path)
         if need and not auth.has_permission(user, need):
             return JSONResponse(
                 {"detail": f"无权限执行该操作（{need}），请联系管理员分配角色"},

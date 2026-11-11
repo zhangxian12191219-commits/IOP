@@ -710,6 +710,9 @@ export const userApi = {
   resetPassword(id, password) {
     return api.post(`/users/${id}/reset-password`, { password })
   },
+  unlock(id) {
+    return api.post(`/users/${id}/unlock`)
+  },
   permissions() {
     return api.get('/users/permissions')
   },
@@ -1356,6 +1359,9 @@ export const imApi = {
   },
   groupWhiteboard(groupId, limit = 500) {
     return api.get(`/im/groups/${groupId}/whiteboard`, { params: { limit } })
+  },
+  directWhiteboard(peerId, limit = 500) {
+    return api.get(`/im/direct/${peerId}/whiteboard`, { params: { limit } })
   },
   attachmentUrl(id) {
     return `/api/im/files/${id}?token=${encodeURIComponent(getToken())}`

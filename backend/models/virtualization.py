@@ -30,6 +30,8 @@ class VirtualPlatform(Base):
     port = Column(Integer, default=443, nullable=False, comment="连接端口")
     username = Column(String(120), nullable=False, comment="只读账号")
     password_enc = Column(Text, comment="加密后的密码")
+    project_name = Column(String(120), comment="OpenStack 项目/租户")
+    domain_name = Column(String(120), comment="OpenStack 域")
     verify_tls = Column(Boolean, default=True, comment="是否校验 TLS 证书")
     enabled = Column(Boolean, default=True, comment="是否参与定时同步")
     sync_interval_minutes = Column(Integer, default=5, comment="同步间隔（分钟）")

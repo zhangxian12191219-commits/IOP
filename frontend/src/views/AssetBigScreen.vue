@@ -91,6 +91,10 @@
             <header class="bs3-panel-head"><div><span class="bs3-eyebrow">04 / DIGITAL TWIN</span><h2>资产数字孪生</h2></div><span class="bs3-badge">3D 实时</span></header>
             <div class="bs3-3d-wrap">
               <BigScreen3D mode="asset" :items="threeItems" :alerts="alerts" />
+              <div v-if="assetsLoaded && !assets.length" class="bs3-data-empty">
+                <strong>当前账号没有可见资产</strong>
+                <span>请检查用户所属资产群组，或让管理员在「用户权限 → 群组」中分配可见设备。</span>
+              </div>
               <div v-if="visible3dAlerts.length" class="bs3-3d-alert-layer">
                 <div class="bs3-3d-alert-head">
                   <span><i></i>LIVE ALERTS</span>
@@ -216,6 +220,7 @@ import '@/styles/bigscreen-3d-pages.css'
 
 const pageRef = ref(null)
 const assets = ref([])
+const assetsLoaded = ref(false)
 const stats = ref({})
 const alerts = ref([])
 const interfaces = ref([])
@@ -235,6 +240,7 @@ const pct = (value) => value !== null && value !== undefined && Number.isFinite(
 const num = (value) => Number.isFinite(Number(value)) ? Number(value) : null
 
 function onlineOf(asset) {
+  if (typeof asset?.is_online === 'boolean') return asset.is_online
   const collected = asset?.metric?.collected_at
   if (!collected) return false
   const text = /[zZ]|[+-]\d{2}:\d{2}$/.test(collected) ? collected : `${collected}Z`
@@ -253,7 +259,9 @@ function warrantyText(asset) {
   return `剩余 ${days} 天`
 }
 
-const totalCount = computed(() => assets.value.length || Number(stats.value.total_devices || 0))
+const totalCount = computed(() => (
+  assetsLoaded.value ? assets.value.length : Number(stats.value.total_devices || 0)
+))
 const enabledCount = computed(() => assets.value.filter((item) => item.is_enabled !== false).length)
 const onlineCount = computed(() => assets.value.filter(onlineOf).length)
 const offlineCount = computed(() => Math.max(0, totalCount.value - onlineCount.value))
@@ -416,7 +424,10 @@ async function loadData() {
       monitorApi.getUnackAlerts(),
       monitorApi.getInterfaceSummaries(),
     ])
-    if (assetRes.status === 'fulfilled') assets.value = assetRes.value || []
+    if (assetRes.status === 'fulfilled') {
+      assets.value = assetRes.value || []
+      assetsLoaded.value = true
+    }
     if (statsRes.status === 'fulfilled') stats.value = statsRes.value?.data || {}
     if (alertRes.status === 'fulfilled') alerts.value = alertRes.value?.data || []
     if (interfaceRes.status === 'fulfilled') interfaces.value = interfaceRes.value?.data?.items || []
@@ -448,3 +459,22 @@ onBeforeUnmount(() => {
   document.removeEventListener('fullscreenchange', onFullscreen)
 })
 </script>
+
+<style scoped>
+.bs3-data-empty {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 30px;
+  z-index: 5;
+  text-align: center;
+  background: radial-gradient(ellipse at center, rgba(8, 25, 43, 0.82), rgba(8, 25, 43, 0.42));
+  pointer-events: none;
+}
+.bs3-data-empty strong { color: #e2f3ff; font-size: 16px; }
+.bs3-data-empty span { max-width: 360px; color: #8fb2c9; font-size: 12px; line-height: 1.7; }
+</style>
